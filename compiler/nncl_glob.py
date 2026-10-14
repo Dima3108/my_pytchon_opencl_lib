@@ -265,3 +265,73 @@ class NnClGlob:
         self.queue.finish()
         
         return grad_input
+    def bmm_backward(self, grad_output: Tensor, A: Tensor, B: Tensor) -> tuple[Tensor, Tensor]:
+        """
+        Обратный проход глобальной операции пакетного матричного умножения (BMM).
+        Реализует дифференцирование на основе переиспользования ядра bmm_tiled.
+        
+        :param grad_output: Пришедший сверху градиент dL/dC [Batch, M, N]
+        :param A: Исходный входной тензор A прямого прохода [Batch, M, K]
+        :param B: Исходный входной тензор B прямого прохода [Batch, K, N]
+        :return: Кортеж (grad_A, grad_B) с размерностями [Batch, M, K] и [Batch, K, N]
+        """
+        # Извлекаем геометрию исходных тензоров
+        Batch, M, K = A.shape
+        _, _, N = B.shape
+
+        # 1. Вычисляем grad_A = grad_output @ B.T
+        # Для транспонирования последних двух осей матрицы B ([Batch, K, N] -> [Batch, N, K]) 
+        # используем наше универсальное и быстрое ядро permute
+        B_T = self.permute(B, [0, 2, 1])
+        
+        # Вызываем bmm_tiled: [Batch, M, N] @ [Batch, N, K] -> [Batch, M, K]
+        grad_A = self.bmm(grad_output, B_T)
+
+        # 2. Вычисляем grad_B = A.T @ grad_output
+        # Транспонируем последние две оси матрицы A ([Batch, M, K] -> [Batch, K, M])
+        A_T = self.permute(A, [0, 2, 1])
+        
+        # Вызываем bmm_tiled: [Batch, K, M] @ [Batch, M, N] -> [Batch, K, N]
+        grad_B = self.bmm(A_T, grad_output)
+
+        return grad_A, grad_B
+    def causal_conv1d_backward(self, grad_output: Tensor, x: Tensor, weight: Tensor) -> tuple[Tensor, Tensor, Tensor]:
+        """
+        Обратный проход глобальной каузальной Depthwise свертки.
+        
+        :param grad_output: Градиент dL/dY [Batch, Channels, Length]
+        :param x: Исходный входной тензор X из прямого прохода [Batch, Channels, Length]
+        :param weight: Исходные веса свертки [Channels, Kernel_Size]
+        :return: Кортеж (grad_X, grad_weight, grad_bias)
+        """
+        Batch, Channels, Length = x.shape
+        kernel_size = weight.shape[1] # Извлекаем Kernel_Size (вторая ось формы весов)
+
+        # Выделяем выходные тензоры под градиенты
+        grad_X = Tensor(x.shape, self.ctx, self.queue)
+        grad_weight = Tensor(weight.shape, self.ctx, self.queue)
+        grad_bias = Tensor([Channels], self.ctx, self.queue) # ИСПРАВЛЕНО: добавлено self.ctx
+
+        # 1. Запуск ядра расчета градиента по входу (3D Grid)
+        # ИСПРАВЛЕНО: Обращаемся к объединенной программе self.prg_conv
+        global_size_in = (Length, Channels, Batch)
+        self.prg_conv.causal_conv1d_backward_input(
+            self.queue, global_size_in, None,
+            grad_output.data_buffer, weight.data_buffer, grad_X.data_buffer,
+            np.int32(Batch), np.int32(Channels), np.int32(Length), np.int32(kernel_size)
+        )
+
+        # 2. Запуск ядра расчета градиента по параметрам свертки (2D Grid)
+        # ИСПРАВЛЕНО: Обращаемся к объединенной программе self.prg_conv
+        global_size_w = (kernel_size, Channels)
+        self.prg_conv.causal_conv1d_backward_weights(
+            self.queue, global_size_w, None,
+            grad_output.data_buffer, x.data_buffer, grad_weight.data_buffer, grad_bias.data_buffer,
+            np.int32(Batch), np.int32(Channels), np.int32(Length), np.int32(kernel_size)
+        )
+        
+        self.queue.finish()
+        return grad_X, grad_weight, grad_bias
+
+
+
