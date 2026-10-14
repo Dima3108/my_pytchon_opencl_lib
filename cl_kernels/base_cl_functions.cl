@@ -71,6 +71,8 @@ inline float nn_cos_backward(float x, float grad_output) {
 inline float nn_tanh_backward(float x, float grad_output) {
     float t = tanh(x);
     return grad_output * (1.0f - t * t);
+   //расчет по y
+   //return grad_output * (1.0f - x * x);
 }
 
 // d/dx [x^2] = 2 * x
@@ -84,8 +86,10 @@ inline float nn_square_backward(float x, float grad_output) {
 
 // d/dx [sigmoid(x)] = sigmoid(x) * (1 - sigmoid(x))
 inline float nn_sigmoid_backward(float x, float grad_output) {
-    float s = nn_sigmoid(x);
-    return grad_output * s * (1.0f - s);
+float s = nn_sigmoid(x);
+    return grad_output * s * (1.0f - s); 
+  
+
 }
 
 // d/dx [silu(x)] = silu(x) + sigmoid(x) * (1 - silu(x))
@@ -113,4 +117,22 @@ inline float nn_gelu_backward(float x, float grad_output) {
 // d/dx [relu(x)] = x > 0 ? 1 : 0
 inline float nn_relu_backward(float x, float grad_output) {
     return x > 0.0f ? grad_output : 0.0f;
+}
+//расчет по y
+//inline float nn_tanh_backward(float x, float grad_output) { return grad_output * (1.0f - x * x); }
+
+// ============================================================================
+// ОБРАТНЫЙ ПРОХОД (BACKWARD) — СЧИТАЕМ СТРОГО ПО ВЫХОДНОМУ ЗНАЧЕНИЮ (Y)
+// ============================================================================
+
+// Вместо: go * sigmoid(x) * (1 - sigmoid(x))
+// Пишем экономичную формулу, где y — это уже вычисленный gate_A[tid] (результат сигмоиды)
+inline float nn_sigmoid_backward_by_y(float y, float grad_output) { 
+    return grad_output * y * (1.0f - y); 
+}
+
+// Вместо: go * (1 - tanh^2(x))
+// Пишем формулу, где y — это результат тангенса
+inline float nn_tanh_backward_by_y(float y, float grad_output) { 
+    return grad_output * (1.0f - y * y); 
 }
