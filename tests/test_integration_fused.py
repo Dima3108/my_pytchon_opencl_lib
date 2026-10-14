@@ -104,7 +104,87 @@ def test_integration_fused_pipeline():
     print("="*70 + "\n")
 
 
+def test_integration_dropout_fused():
+    platforms = cl.get_platforms()
+    if not platforms:
+        raise RuntimeError("OpenCL платформы не найдены.")
+    devices = platforms[0].get_devices()
+    ctx = cl.Context([devices[0]])
+    queue = cl.CommandQueue(ctx)
+    print("\n" + "="*70)
+    print("🚀 ТЕСТ ДЕТЕРМИНИРОВАННОГО GPU DROPOUT ВНУТРИ LOCALRUNNER")
+    print("="*70)
+
+    # Стандартная инициализация OpenCL (используем глобальные ctx/queue из вашего каркаса)
+    shape = (8,)
+    
+    # Исходные векторы
+    init_X = np.array([2.0, -1.0, 3.0, 4.0, -2.0, 1.5, 0.5, -0.5], dtype=np.float32)
+    init_W = np.array([1.0, 2.0, 1.0, 2.0, 1.0, 2.0, 1.0, 2.0], dtype=np.float32)
+
+    X = Tensor.from_numpy(init_X, ctx, queue)
+    W = Tensor.from_numpy(init_W, ctx, queue)
+    Y = Tensor(shape, ctx, queue)
+
+    X.require_grad()
+    W.require_grad()
+    Y.require_grad()
+
+    runner = LocalRunner(ctx, queue, is_training=True)
+
+    # Фиксируем seed на стороне Python и пробрасываем его в мета-код
+    # В цикле обучения вашей модели здесь будет стоять: np.random.randint(1, 100000)
+    DYNAMIC_SEED = 424242 
+    DROPOUT_P = 0.25 # Вероятность зануления 25%
+
+    print(f"Выполнение прямого прохода JIT-ядра (Умножение + Dropout, seed={DYNAMIC_SEED})...")
+    
+    # ИСПРАВЛЕНИЕ: Передаем параметры строго позиционно, без "p=" и "seed="
+    # В Си-код улетит чистая строчка: nn_dropout(X[tid] * W[tid], DROPOUT_P, tid, DYNAMIC_SEED)
+    runner(lambda: Y == nnclloc.dropout(X * W, DROPOUT_P, tid, DYNAMIC_SEED))
+
+
+    # Симулируем приход единичного градиента ошибок сверху
+    init_grad_output = np.ones(shape, dtype=np.float32)
+    cl.enqueue_copy(queue, Y.grad_buffer, init_grad_output)
+    
+    # Очищаем буферы градиентов входов перед тестом
+    cl.enqueue_fill_buffer(queue, X.grad_buffer, np.float32(0.0), 0, X.nbytes)
+    cl.enqueue_fill_buffer(queue, W.grad_buffer, np.float32(0.0), 0, W.nbytes)
+    queue.finish()
+
+    print("Выполнение обратного прохода градиентов...")
+    # Разворачиваем стек. ЯдроFused_backward_... извлечет ТОТ ЖЕ САМЫЙ DYNAMIC_SEED 
+    # из сохраненного текстового Си-шаблона программы!
+    runner.run_backward()
+
+    # Скачиваем результаты
+    cl_res_Y = HostReturner.to_cpu(Y)
+    cl_grad_X = HostReturner.to_cpu_grad(X)
+
+    # =========================================================================
+    # ЭТАЛОННЫЙ РАСЧЕТ НА PYTORCH С ВОСПРОИЗВЕДЕНИЕМ МАСКИ
+    # =========================================================================
+    print("\nМатематическая проверка...")
+    # Чтобы проверить правильность, мы скачаем маску, которую сгенерировал наш OpenCL.
+    # Элементы, которые стали равны 0.0 в cl_res_Y, были занулены.
+    # Восстанавливаем эту двоичную маску в PyTorch, чтобы доказать детерминизм Chain Rule.
+    opencl_mask = (cl_res_Y != 0.0).astype(np.float32)
+    
+    t_X = torch.tensor(init_X, requires_grad=True)
+    t_W = torch.tensor(init_W, requires_grad=True)
+    
+    # Имитируем Inverted Dropout PyTorch через маску из OpenCL
+    t_fused = (t_X * t_W) * torch.tensor(opencl_mask) / (1.0 - DROPOUT_P)
+    
+    t_fused.backward(torch.ones(shape))
+
+    # Сверяем градиент по входу X
+    np.testing.assert_allclose(cl_grad_X, t_X.grad.numpy(), rtol=1e-5, atol=1e-5)
+    print("  ✅ Успешно! Маска обратного прохода на GPU совпала с прямым шагом на 100%.")
+    print("  Градиенты по входу X математически верны.")
 
 if __name__ == "__main__":
-    test_integration_fused_pipeline()
+    #test_integration_fused_pipeline()
+    test_integration_dropout_fused()
     #test_softmax_glob_pipeline()

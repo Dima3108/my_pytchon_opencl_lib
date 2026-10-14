@@ -136,3 +136,38 @@ inline float nn_sigmoid_backward_by_y(float y, float grad_output) {
 inline float nn_tanh_backward_by_y(float y, float grad_output) { 
     return grad_output * (1.0f - y * y); 
 }
+
+// Быстрый генератор псевдослучайных чисел на основе индекса потока и seed
+inline float nn_rand(int tid, unsigned int seed) {
+    unsigned int x = tid + seed;
+    x = (x ^ 61) ^ (x >> 16);
+    x += (x << 3);
+    x = x ^ (x >> 4);
+    x *= 0x27d4eb2d;
+    x = x ^ (x >> 15);
+    // Возвращает float в диапазоне [0.0, 1.0]
+    return (float)x / 4294967296.0f; 
+}
+
+// Функция инлайн-дропаута для прямого прохода
+inline float nn_dropout(float x, float p, int tid, unsigned int seed) {
+    if (p <= 0.0f) return x;
+    if (p >= 1.0f) return 0.0f;
+    
+    float r = nn_rand(tid, seed);
+    if (r < p) {
+        return 0.0f;
+    } else {
+        return x / (1.0f - p); // Масштабирование Inverted Dropout
+    }
+}
+
+// Функция инлайн-дропаута для обратного прохода
+inline float nn_dropout_backward(float grad_out, float p, int tid, unsigned int seed) {
+    float r = nn_rand(tid, seed);
+    if (r < p) {
+        return 0.0f;
+    } else {
+        return grad_out / (1.0f - p);
+    }
+}

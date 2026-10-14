@@ -51,45 +51,90 @@ class LocalRunner:
                 target = target.strip()
                 operation = operation.strip()
 
+                # ОЧИСТКА: Удаляем любые висячие закрывающие скобки
                 cl_op = operation.replace('nnclloc.', 'nn_')
                 while cl_op.count(')') > cl_op.count('('):
                     last_bracket = cl_op.rfind(')')
                     if last_bracket != -1:
                         cl_op = cl_op[:last_bracket] + cl_op[last_bracket+1:]
 
+                # =============================================================
+                # ИЗОЛИРОВАННЫЙ БЛОК ДЛЯ DROPOUT (Перехватываем его до общего парсера)
+                # =============================================================
+                if "nn_dropout" in cl_op:
+                    # Ищем структуру: nn_dropout(ВЫРАЖЕНИЕ, DROPOUT_P, tid, DYNAMIC_SEED)
+                    drop_match = re.search(r'nn_dropout\((.*?), (.*?), tid, (.*?)\)', cl_op)
+                    if drop_match:
+                        inner_expr = drop_match.group(1).strip() # то, что внутри (например, X * W)
+                        p_val = drop_match.group(2).strip()
+                        seed_val = drop_match.group(3).strip()
+
+                        # 1. Формируем FORWARD Си-код для Дропаута
+                        # Превращаем X * W в X[tid] * W[tid]
+                        tokens_inner = re.findall(r'[a-zA-Z_][a-zA-Z0-9_]*', inner_expr)
+                        cl_inner_fwd = inner_expr
+                        for t in tokens_inner:
+                            if t not in ['DROPOUT_P', 'DYNAMIC_SEED'] and not t.isdigit():
+                                detected_tensors[t] = True
+                                cl_inner_fwd = re.sub(r'\b' + t + r'\b', f"{t}[tid]", cl_inner_fwd)
+
+                        detected_tensors[target] = True
+                        cl_body_forward.append(f"{target}[tid] = nn_dropout({cl_inner_fwd}, {p_val}, tid, {seed_val});")
+
+                        # 2. Формируем BACKWARD Си-код для Дропаута
+                        if self.is_training:
+                            cl_body_backward.append(f"float upstream_{target} = grad_{target}[tid];")
+                            cl_body_backward.append(f"    float back_drop_{target} = nn_dropout_backward(upstream_{target}, {p_val}, tid, {seed_val});")
+                            
+                            # Распределяем градиент, прошедший сквозь маску дропаута, по внутреннему выражению
+                            if "*" in inner_expr:
+                                u, v = [item.shape_item.strip() if hasattr(item, 'shape_item') else item.strip() for item in inner_expr.split('*')]
+                                detected_tensors[u] = True
+                                detected_tensors[v] = True
+                                cl_body_backward.append(f"    grad_{u}[tid] += back_drop_{target} * {v}[tid];")
+                                cl_body_backward.append(f"    grad_{v}[tid] += back_drop_{target} * {u}[tid];")
+                            elif "+" in inner_expr:
+                                vars_add = [v.strip() for v in inner_expr.split('+')]
+                                for v in vars_add:
+                                    detected_tensors[v] = True
+                                    cl_body_backward.append(f"    grad_{v}[tid] += back_drop_{target};")
+                            else:
+                                detected_tensors[inner_expr] = True
+                                cl_body_backward.append(f"    grad_{inner_expr}[tid] += back_drop_{target};")
+                        
+                        continue # МГНОВЕННО ПЕРЕХОДИМ К СЛЕДУЮЩЕМУ ВЫРАЖЕНИЮ, ИСКЛЮЧАЯ ДВОЙНОЙ РАЗБОР!
+
+                # =============================================================
+                # СТАНДАРТНЫЙ БЛОК ДЛЯ ОСТАЛЬНЫХ ОПЕРАЦИЙ (Сигмоиды, Тангенсы, Суммы)
+                # =============================================================
                 tokens = re.findall(r'[a-zA-Z_][a-zA-Z0-9_]*', cl_op)
                 
-                # ИСПРАВЛЕНИЕ: Если операция IN-PLACE и включено обучение,
-                # делаем изолированный физический клон буфера памяти во VRAM
                 if target in tokens and self.is_training:
                     saved_name = f"saved_{target}"
                     tensor_obj = closure_vars[target]
-                    
-                    # Выделяем новую изолированную область VRAM
                     vram_copy = cl.Buffer(self.ctx, cl.mem_flags.READ_WRITE, tensor_obj.nbytes)
                     cl.enqueue_copy(self.queue, vram_copy, tensor_obj.data_buffer)
                     saved_tensors_vram[saved_name] = vram_copy
 
                 for t in tokens:
-                    if not t.startswith('nn_') and t not in ['float', 'int']:
-                        detected_tensors[t] = True
-                        cl_op = re.sub(r'\b' + t + r'\b', f"{t}[tid]", cl_op)
+                    if (t.startswith('nn_') or 
+                        t in ['float', 'int', 'tid', 'unsigned', 'p', 'seed', 'p_val', 'seed_val'] or 
+                        t.isdigit()):
+                        continue
+                    detected_tensors[t] = True
+                    cl_op = re.sub(r'\b' + t + r'\b', f"{t}[tid]", cl_op)
 
                 detected_tensors[target] = True
                 cl_body_forward.append(f"{target}[tid] = {cl_op};")
 
-                # 3. АВТО-BACKWARD (Полная изоляция через локальный upstream_grad)
                 if self.is_training:
                     if "nn_sigmoid" in cl_op:
                         src_var = re.search(r'nn_sigmoid\((.*?)\)', cl_op).group(1).replace('[tid]', '')
                         use_src = f"saved_{src_var}" if f"saved_{src_var}" in saved_tensors_vram else src_var
-                        # Для операции T = sigmoid(S): входящим градиентом является строго grad_T.
-                        # Но чтобы не читать испорченный/накопленный grad_S, если T == S, 
-                        # мы изолируем шаг вычисления.
                         cl_body_backward.append(
                             f"float upstream_{target} = grad_{target}[tid];\n"
                             f"    float back_{src_var} = nn_sigmoid_backward({use_src}[tid], upstream_{target});\n"
-                            f"    grad_{src_var}[tid] = back_{src_var};" # Для листка графа заменяем накопление на чистое присвоение!
+                            f"    grad_{src_var}[tid] = back_{src_var};"
                         )
                     elif "nn_tanh" in cl_op:
                         src_var = re.search(r'nn_tanh\((.*?)\)', cl_op).group(1).replace('[tid]', '')
@@ -99,14 +144,10 @@ class LocalRunner:
                             f"    float back_{src_var} = nn_tanh_backward({use_src}[tid], upstream_{target});\n"
                             f"    grad_{src_var}[tid] = back_{src_var};"
                         )
-                    elif "*" in operation:
+                    elif "*" in operation and "nn_dropout" not in cl_op:
                         u, v = [item.strip() for item in operation.split('*')]
                         use_u = f"saved_{u}" if f"saved_{u}" in saved_tensors_vram else u
                         use_v = f"saved_{v}" if f"saved_{v}" in saved_tensors_vram else v
-                        
-                        # Для операции Y = U * V:
-                        # Если это промежуточный шаг, мы должны аккумулировать через += только для входов, 
-                        # которые не являются целью (target) текущего накопления.
                         cl_body_backward.append(
                             f"float upstream_{target} = grad_{target}[tid];\n"
                             f"    float back_{u} = upstream_{target} * {use_v}[tid];\n"
@@ -119,7 +160,6 @@ class LocalRunner:
                         cl_body_backward.append(f"float upstream_{target} = grad_{target}[tid];")
                         for v in vars_add:
                             cl_body_backward.append(f"    grad_{v}[tid] += upstream_{target};")
-
 
         # Сборка аргументов ядра
         kernel_hash = abs(hash(expr_str))
@@ -145,7 +185,12 @@ class LocalRunner:
             {forward_statements}
         }}
         """
-
+        # >>> ВОТ СЮДА ВСТАВЛЯЕМ ПЕРВЫЙ БЛОК КОДА:
+        # Находим реальные значения чисел из замыкания лямбды и вжигаем их в Си-текст
+        if 'DROPOUT_P' in closure_vars:
+            full_forward_code = full_forward_code.replace('DROPOUT_P', f"{float(closure_vars['DROPOUT_P'])}f")
+        if 'DYNAMIC_SEED' in closure_vars:
+            full_forward_code = full_forward_code.replace('DYNAMIC_SEED', f"{int(closure_vars['DYNAMIC_SEED'])}")
         program = JITProgramCache.get_or_compile(self.ctx, full_forward_code)
         kernel = getattr(program, kernel_name)
 
@@ -181,7 +226,12 @@ class LocalRunner:
                 {backward_statements}
             }}
             """
-            
+            # >>> ВОТ СЮДА ВСТАВЛЯЕМ ВТОРОЙ БЛОК КОДА:
+            # Замораживаем маску для обратного прохода по тому же seed!
+            if 'DROPOUT_P' in closure_vars:
+                full_backward_code = full_backward_code.replace('DROPOUT_P', f"{float(closure_vars['DROPOUT_P'])}f")
+            if 'DYNAMIC_SEED' in closure_vars:
+                full_backward_code = full_backward_code.replace('DYNAMIC_SEED', f"{int(closure_vars['DYNAMIC_SEED'])}")
             # ВАЖНО: Мы сохраняем в стек КОПИЮ списка буферов (cl_buffers_forward[:]), 
             # которая намертво зафиксировала состояние указателей и кэшей VRAM именно на ТЕКУЩИЙ шаг!
             cl_buffers_backward = list(cl_buffers_forward)
