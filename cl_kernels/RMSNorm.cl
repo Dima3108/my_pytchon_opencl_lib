@@ -71,7 +71,7 @@ __kernel void rmsnorm_backward(
         float x_norm = X[idx] * inv_rms;
         
         // Попутно поток может копить градиент по весам gamma для текущей строки
-        // grad_gamma_part[row * d_model + i] = grad_output[idx] * x_norm;
+         grad_gamma_part[row * d_model + i] = grad_output[idx] * x_norm;
 
         local_dot += grad_output[idx] * gamma[i] * X[idx];
     }

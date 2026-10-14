@@ -103,6 +103,8 @@ def test_integration_fused_pipeline():
     print("Связка Tensor -> LocalRunner -> HostReturner работает математически верно.")
     print("="*70 + "\n")
 
+
+
 if __name__ == "__main__":
     test_integration_fused_pipeline()
-
+    #test_softmax_glob_pipeline()
