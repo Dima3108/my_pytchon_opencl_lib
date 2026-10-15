@@ -37,6 +37,9 @@ class NnClGlob:
         # 5. Загрузка CausalConv1d
         with open(os.path.join(kernels_dir, 'CausalConv1d.cl'), 'r', encoding='utf-8') as f:
             self.prg_conv = JITProgramCache.get_or_compile(self.ctx, f.read())
+        # Дописать в метод _load_kernels() класса NnClGlob:
+        with open(os.path.join(kernels_dir, 'embedding.cl'), 'r', encoding='utf-8') as f:
+            self.prg_embedding = JITProgramCache.get_or_compile(self.ctx, f.read())
 
     def rmsnorm(self, x: Tensor, gamma: Tensor) -> Tensor:
         """
@@ -332,6 +335,42 @@ class NnClGlob:
         
         self.queue.finish()
         return grad_X, grad_weight, grad_bias
+    def embedding(self, x_tokens_buf, weight: Tensor, total_tokens: int) -> Tensor:
+        """Прямой ход Embedding: Принимает total_tokens в явном виде"""
+        vocab_size, embedding_dim = weight.shape
+        
+        # Создаем выходной тензор строго под реальный размер осей (8 * 16 = 128 элементов)
+        y = Tensor([total_tokens, embedding_dim], self.ctx, self.queue)
+        
+        # Точная 2D-сетка потоков
+        global_size = (total_tokens, embedding_dim)
+        
+        self.prg_embedding.embedding_forward(
+            self.queue, global_size, None,
+            x_tokens_buf, weight.data_buffer, y.data_buffer,
+            np.int32(embedding_dim), np.int32(total_tokens)
+        )
+        self.queue.finish()
+        return y
+
+    def embedding_backward(self, grad_output: Tensor, x_tokens_buf, weight_shape, total_tokens: int) -> Tensor:
+        """Обратный ход Embedding"""
+        vocab_size, embedding_dim = weight_shape
+        
+        grad_weight = Tensor(weight_shape, self.ctx, self.queue)
+        cl.enqueue_fill_buffer(self.queue, grad_weight.data_buffer, np.float32(0.0), 0, grad_weight.nbytes)
+        
+        global_size = (total_tokens, embedding_dim)
+        
+        self.prg_embedding.embedding_backward(
+            self.queue, global_size, None,
+            grad_output.data_buffer, x_tokens_buf, grad_weight.data_buffer,
+            np.int32(embedding_dim), np.int32(total_tokens)
+        )
+        self.queue.finish()
+        return grad_weight
+
+
 
 
 
