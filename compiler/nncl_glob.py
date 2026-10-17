@@ -3,9 +3,9 @@ import numpy as np
 import pyopencl as cl
 from core.tensor import Tensor
 from compiler.nncl_compiler import JITProgramCache
-
+from core.autograd import auto_backward
 class NnClGlob:
-    def __init__(self, ctx, queue):
+    def __init__(self, ctx, queue, autograd_ctx=None):
         """
         Диспетчер тяжелых глобальных операций библиотеки nncl.
         Загружает и кэширует скомпилированные Си-ядра.
@@ -13,7 +13,8 @@ class NnClGlob:
         self.ctx = ctx
         self.queue = queue
         self._load_kernels()
-
+        # 3. СОХРАНЯЕМ КОНТЕКСТ ДЛЯ ДЕКОРАТОРА
+        self.autograd_ctx = autograd_ctx 
     def _load_kernels(self):
         """Загружает Си-код всех тяжелых ядер из cl_kernels"""
         kernels_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'cl_kernels'))
@@ -33,6 +34,7 @@ class NnClGlob:
         # 4. Загрузка Permute (Transpose)
         with open(os.path.join(kernels_dir, 'permute.cl'), 'r', encoding='utf-8') as f:
             self.prg_permute = JITProgramCache.get_or_compile(self.ctx, f.read())
+            self.kernel_permute = cl.Kernel(self.prg_permute, "tensor_permute") # Кэшируем само ядро!
 
         # 5. Загрузка CausalConv1d
         with open(os.path.join(kernels_dir, 'CausalConv1d.cl'), 'r', encoding='utf-8') as f:
@@ -40,7 +42,7 @@ class NnClGlob:
         # Дописать в метод _load_kernels() класса NnClGlob:
         with open(os.path.join(kernels_dir, 'embedding.cl'), 'r', encoding='utf-8') as f:
             self.prg_embedding = JITProgramCache.get_or_compile(self.ctx, f.read())
-
+    @auto_backward
     def rmsnorm(self, x: Tensor, gamma: Tensor) -> Tensor:
         """
         Глобальная операция RMSNorm (Forward)
@@ -69,7 +71,7 @@ class NnClGlob:
         # Сохраняем кэш редукции прямо внутри тензора (нужно для обучения)
         y._inv_rms_cache = inv_rms_cache
         return y
-
+    @auto_backward
     def softmax(self, x: Tensor, dim: int = -1) -> Tensor:
         """
         Глобальная операция Safe Softmax (Forward)
@@ -101,7 +103,7 @@ class NnClGlob:
         self.queue.finish()
         return y
 
-
+    @auto_backward
     def bmm(self, A: Tensor, B: Tensor) -> Tensor:
         """
         Пакетное матричное умножение (Batch Matrix Multiplication)
@@ -136,8 +138,9 @@ class NnClGlob:
             np.int32(batch_stride_A), np.int32(batch_stride_B), np.int32(batch_stride_C)
         )
         self.queue.finish()
+       
         return C
-
+    @auto_backward
     def permute(self, x: Tensor, axes: list) -> Tensor:
         """
         Глобальная перестановка осей тензора (Универсальный Permute/Transpose до 10D)
@@ -155,7 +158,7 @@ class NnClGlob:
         
         global_size = (x.size,)
         
-        self.prg_permute.tensor_permute(
+        self.kernel_permute(
             self.queue, global_size, None,
             x.data_buffer, y.data_buffer,
             src_dims_g, dst_dims_g, axes_g,
@@ -163,7 +166,7 @@ class NnClGlob:
         )
         self.queue.finish()
         return y
-
+    @auto_backward
     def causal_conv1d(self, x: Tensor, weight: Tensor, bias: Tensor) -> Tensor:
         """
         Каузальная Depthwise свертка (Forward)
@@ -186,6 +189,9 @@ class NnClGlob:
         )
         self.queue.finish()
         return y
+    ###############################################
+    #backward
+    ##############################################
     def rmsnorm_backward(self, grad_output: Tensor, x: Tensor, gamma: Tensor) -> tuple[Tensor, Tensor]:
         """
         Обратный проход глобальной операции RMSNorm.
