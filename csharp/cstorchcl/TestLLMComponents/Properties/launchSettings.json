@@ -1,0 +1,8 @@
+{
+  "profiles": {
+    "TestLLMComponents": {
+      "commandName": "Project",
+      "debugEngines": "managed,native"
+    }
+  }
+}

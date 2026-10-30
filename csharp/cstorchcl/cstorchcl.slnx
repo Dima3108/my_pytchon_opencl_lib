@@ -1,0 +1,4 @@
+<Solution>
+  <Project Path="cstorchcl/cstorchcl.csproj" />
+  <Project Path="TestLLMComponents/TestLLMComponents.csproj" />
+</Solution>

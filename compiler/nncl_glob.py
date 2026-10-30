@@ -214,7 +214,6 @@ class NnClGlob:
         # 1. Выделяем тензоры для градиентов по входу (X) и весам (gamma)
         grad_input = Tensor(x.shape, self.ctx, self.queue)
         grad_gamma = Tensor(gamma.shape, self.ctx, self.queue)
-        
         # Вспомогательный буфер для накопления градиентов по gamma от каждой строки
         grad_gamma_part = cl.Buffer(self.ctx, cl.mem_flags.READ_WRITE, x.size * 4) # float32
         
@@ -236,7 +235,6 @@ class NnClGlob:
             np.int32(d_model)
         )
         active_queue.finish()
-        
         # 3. Редукция градиента по обучаемым весам gamma
         # Так как веса gamma общие для всего батча и последовательности, нам нужно 
         # просуммировать промежуточный буфер grad_gamma_part по оси строк.
@@ -246,7 +244,6 @@ class NnClGlob:
         host_parts = np.empty((num_rows, d_model), dtype=np.float32)
         cl.enqueue_copy(active_queue, host_parts, grad_gamma_part)
         active_queue.finish()
-        
         # Суммируем градиенты от всех токенов в единый вектор градиента весов
         final_grad_gamma = np.sum(host_parts, axis=0, dtype=np.float32)
         

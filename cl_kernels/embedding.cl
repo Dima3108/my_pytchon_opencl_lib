@@ -1,5 +1,6 @@
 // Кастомная атомарная функция для float, совместимая со спецификацией OpenCL 1.2
-inline void atomic_add_float(__global volatile float* address, const float val) {
+inline void atomic_add_float(__global volatile float* address, const float val) 
+{
     // Трактуем указатель на float как указатель на int для работы атомика
     __global volatile int* int_address = (__global volatile int*)address;
     

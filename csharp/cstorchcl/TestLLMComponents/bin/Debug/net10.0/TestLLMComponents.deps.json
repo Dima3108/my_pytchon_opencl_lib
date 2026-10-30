@@ -1,0 +1,53 @@
+{
+  "runtimeTarget": {
+    "name": ".NETCoreApp,Version=v10.0",
+    "signature": ""
+  },
+  "compilationOptions": {},
+  "targets": {
+    ".NETCoreApp,Version=v10.0": {
+      "TestLLMComponents/1.0.0": {
+        "dependencies": {
+          "cstorchcl": "1.0.0",
+          "NOpenCL": "1.0.0.0"
+        },
+        "runtime": {
+          "TestLLMComponents.dll": {}
+        }
+      },
+      "cstorchcl/1.0.0": {
+        "runtime": {
+          "cstorchcl.dll": {
+            "assemblyVersion": "1.0.0.0",
+            "fileVersion": "1.0.0.0"
+          }
+        }
+      },
+      "NOpenCL/1.0.0.0": {
+        "runtime": {
+          "NOpenCL.dll": {
+            "assemblyVersion": "1.0.0.0",
+            "fileVersion": "1.0.0.0"
+          }
+        }
+      }
+    }
+  },
+  "libraries": {
+    "TestLLMComponents/1.0.0": {
+      "type": "project",
+      "serviceable": false,
+      "sha512": ""
+    },
+    "cstorchcl/1.0.0": {
+      "type": "project",
+      "serviceable": false,
+      "sha512": ""
+    },
+    "NOpenCL/1.0.0.0": {
+      "type": "reference",
+      "serviceable": false,
+      "sha512": ""
+    }
+  }
+}

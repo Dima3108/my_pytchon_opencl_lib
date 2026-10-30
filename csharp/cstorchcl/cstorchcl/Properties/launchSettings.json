@@ -1,0 +1,10 @@
+{
+  "profiles": {
+    "cstorchcl": {
+      "commandName": "Project"
+    },
+    "Профиль 1": {
+      "commandName": "Executable"
+    }
+  }
+}
