@@ -64,6 +64,8 @@ namespace cstorchcl.core
                 {
                     // Создаем временный хост-массив нулей для очистки буфера градиента
                     float[] zeroPattern = new float[param.Grad.Size];
+                    for (int i = 0; i < zeroPattern.Length; i++)
+                        zeroPattern[i] = 0;
                     long sizeInBytes = (long)param.Grad.Size * sizeof(float);
                     unsafe
                     {

@@ -104,14 +104,35 @@ namespace cstorchcl.core
         }
 
         /// <summary>
-        /// Вспомогательный метод для суммирования градиентов на GPU.
-        /// Реализует логику: targetGrad += newGrad
+        /// Физически суммирует градиенты на GPU во VRAM.
+        /// Реализует операцию: targetGrad += newGrad
         /// </summary>
         private static void AccumulateGradient(Tensor targetGrad, Tensor newGrad)
         {
-            // TODO: Вызов легкого Си-ядра поэлементного сложения векторов во VRAM через DeviceQueueRegistry.GetCurrent()
-            // На этапе тестирования структуры графа здесь будет заглушка.
+            if (targetGrad == null || newGrad == null) return;
+
+            string kernelSource = @"
+                kernel void accum_grad(global float* target, global const float* source) {
+                    int id = get_global_id(0);
+                    target[id] += source[id];
+                }";
+
+            // Используем контекст и устройство из буфера тензора
+            // (Так как NOpenCL.Buffer привязан к контексту, берем глобальный ComputeContext через диспетчер или activeQueue)
+            var queue = DeviceQueueRegistry.GetCurrent();
+
+            // Компилируем легкое ядро аккумуляции
+            var prg = compiler.JITProgramCache.GetOrCompile(queue.Context, queue.Device, kernelSource);
+            using var kernel = prg.CreateKernel("accum_grad");
+
+            kernel.Arguments[0].SetValue(targetGrad.DataBuffer);
+            kernel.Arguments[1].SetValue(newGrad.DataBuffer);
+
+            // Запускаем параллельное сложение по всей длине буфера градиента
+            queue.EnqueueNDRangeKernel(kernel,  new[] { new IntPtr(targetGrad.Size) }, null);
+            queue.Finish();
         }
+
     }
 }
 

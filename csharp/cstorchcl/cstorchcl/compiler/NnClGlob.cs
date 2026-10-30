@@ -674,6 +674,136 @@ namespace cstorchcl.compiler
 
 
         #endregion
+#if DEBUG
+        /// <summary>
+        /// Временная отладочная операция ELU (Forward). Код ядра встроен прямо в метод.
+        /// </summary>
+        public Tensor Elu(Tensor x, float alpha = 1.0f)
+        {
+            Tensor y = new Tensor(x.Shape, _computeCtx.Context, MemoryFlags.ReadWrite, requiresGrad: x.RequiresGrad);
+
+            string kernelSource = @"
+                kernel void elu_forward(global const float* X, global float* Y) {
+                    int id = get_global_id(0);
+                    float val = X[id];
+                    Y[id] = (val > 0.0f) ? val :"+ alpha.ToString().Replace(',','.')+@" * (exp(val) - 1.0f);
+                }";
+
+            // Используем наш JITProgramCache для предотвращения повторной компиляции
+            var prg = JITProgramCache.GetOrCompile(_computeCtx.Context, _computeCtx.Device, kernelSource);
+            using var kernel = prg.CreateKernel("elu_forward");
+
+            kernel.Arguments[0].SetValue(x.DataBuffer);
+            kernel.Arguments[1].SetValue(y.DataBuffer);
+            //kernel.Arguments[2].SetValue(alpha);
+
+            CommandQueue activeQueue = DeviceQueueRegistry.GetCurrent();
+            activeQueue.EnqueueNDRangeKernel(kernel,  new[] { new IntPtr(x.Size) }, null);
+            activeQueue.Finish();
+
+            if (y.RequiresGrad)
+            {
+                y.Creator = new EluOp(x, y, alpha, this);
+            }
+
+            return y;
+        }
+
+        /// <summary>
+        /// Временная отладочная операция ELU (Backward).
+        /// </summary>
+        public Tensor EluBackward(Tensor gradOutput, Tensor y, float alpha = 1.0f)
+        {
+            Tensor gradInput = new Tensor(y.Shape, _computeCtx.Context, MemoryFlags.ReadWrite, requiresGrad: false);
+
+            string kernelSource = @"
+                kernel void elu_backward(global const float* grad_output, global const float* Y, global float* grad_input) {
+                    int id = get_global_id(0);
+                    float y_val = Y[id];
+                    grad_input[id] = (y_val > 0.0f) ? grad_output[id] : grad_output[id] * (y_val + "+alpha.ToString().Replace(',','.')+@");
+                }";
+
+            var prg = JITProgramCache.GetOrCompile(_computeCtx.Context, _computeCtx.Device, kernelSource);
+            using var kernel = prg.CreateKernel("elu_backward");
+
+            kernel.Arguments[0].SetValue(gradOutput.DataBuffer);
+            kernel.Arguments[1].SetValue(y.DataBuffer);
+            kernel.Arguments[2].SetValue(gradInput.DataBuffer);
+            //kernel.Arguments[3].SetValue(alpha);
+
+            CommandQueue activeQueue = DeviceQueueRegistry.GetCurrent();
+            activeQueue.EnqueueNDRangeKernel(kernel,  new[] { new IntPtr(y.Size) }, null);
+            activeQueue.Finish();
+
+            return gradInput;
+        }
+#endif
+        #region MSELoss
+        /// <summary>
+        /// Вычисляет MSE Loss и возвращает скаляр ошибки, регистрируя шаг в Autograd.
+        /// </summary>
+        public Tensor MseLoss(Tensor pred, Tensor target)
+        {
+            Tensor loss = new Tensor(new[] { 1 }, _computeCtx.Context, MemoryFlags.ReadWrite, requiresGrad: pred.RequiresGrad);
+
+            // Для простоты посчитаем разницу прямо на GPU
+            string kernelSource = @"
+                kernel void mse_forward(global const float* P, global const float* T, global float* L, const int size) {
+                    float sum = 0.0f;
+                    for(int i = 0; i < size; i++) {
+                        float diff = P[i] - T[i];
+                        sum += diff * diff;
+                    }
+                    L[0] = sum / size;
+                }";
+
+            var prg = JITProgramCache.GetOrCompile(_computeCtx.Context, _computeCtx.Device, kernelSource);
+            using var kernel = prg.CreateKernel("mse_forward");
+            kernel.Arguments[0].SetValue(pred.DataBuffer);
+            kernel.Arguments[1].SetValue(target.DataBuffer);
+            kernel.Arguments[2].SetValue(loss.DataBuffer);
+            kernel.Arguments[3].SetValue(pred.Size);
+
+            CommandQueue queue = DeviceQueueRegistry.GetCurrent();
+            queue.EnqueueNDRangeKernel(kernel,  new[] { new IntPtr(1) }, null);
+            queue.Finish();
+
+            if (loss.RequiresGrad)
+            {
+                loss.Creator = new MseLossOp(pred, target, loss, this);
+            }
+
+            return loss;
+        }
+
+        /// <summary>
+        /// Градиент для MSE Loss: dL/dPred = 2 * (Pred - Target) / Size
+        /// </summary>
+        public Tensor MseLossBackward(Tensor pred, Tensor target)
+        {
+            Tensor gradInput = new Tensor(pred.Shape, _computeCtx.Context, MemoryFlags.ReadWrite, requiresGrad: false);
+
+            string kernelSource = @"
+                kernel void mse_backward(global const float* P, global const float* T, global float* GI, const int size) {
+                    int id = get_global_id(0);
+                    GI[id] = 2.0f * (P[id] - T[id]) / size;
+                }";
+
+            var prg = JITProgramCache.GetOrCompile(_computeCtx.Context, _computeCtx.Device, kernelSource);
+            using var kernel = prg.CreateKernel("mse_backward");
+            kernel.Arguments[0].SetValue(pred.DataBuffer);
+            kernel.Arguments[1].SetValue(target.DataBuffer);
+            kernel.Arguments[2].SetValue(gradInput.DataBuffer);
+            kernel.Arguments[3].SetValue(pred.Size);
+
+            CommandQueue queue = DeviceQueueRegistry.GetCurrent();
+            queue.EnqueueNDRangeKernel(kernel,  new[] { new IntPtr(pred.Size) }, null);
+            queue.Finish();
+
+            return gradInput;
+        }
+
+        #endregion
     }
 }
 

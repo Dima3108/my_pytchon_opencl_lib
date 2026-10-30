@@ -3,24 +3,32 @@
   "WorkspaceRootPath": "C:\\Users\\\u0414\u043C\u0438\u0442\u0440\u0438\u0439\\github_repo\\my_pytchon_opencl_lib\\csharp\\cstorchcl\\",
   "Documents": [
     {
-      "AbsoluteMoniker": "D:0:0:{250AFA78-9395-4C4F-9FBC-B5A5C7D3F42A}|cstorchcl\\cstorchcl.csproj|c:\\users\\\u0434\u043C\u0438\u0442\u0440\u0438\u0439\\github_repo\\my_pytchon_opencl_lib\\csharp\\cstorchcl\\cstorchcl\\core\\tensor.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}",
-      "RelativeMoniker": "D:0:0:{250AFA78-9395-4C4F-9FBC-B5A5C7D3F42A}|cstorchcl\\cstorchcl.csproj|solutionrelative:cstorchcl\\core\\tensor.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}"
+      "AbsoluteMoniker": "D:0:0:{153CC626-5D25-47B5-93F5-D27AA5DCADDC}|TrainTest\\TrainTest.csproj|c:\\users\\\u0434\u043C\u0438\u0442\u0440\u0438\u0439\\github_repo\\my_pytchon_opencl_lib\\csharp\\cstorchcl\\traintest\\program.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}",
+      "RelativeMoniker": "D:0:0:{153CC626-5D25-47B5-93F5-D27AA5DCADDC}|TrainTest\\TrainTest.csproj|solutionrelative:traintest\\program.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}"
     },
     {
-      "AbsoluteMoniker": "D:0:0:{2416905E-554A-4F09-96E2-A2BB8DCF57E3}|TestLLMComponents\\TestLLMComponents.csproj|c:\\users\\\u0434\u043C\u0438\u0442\u0440\u0438\u0439\\github_repo\\my_pytchon_opencl_lib\\csharp\\cstorchcl\\testllmcomponents\\testllmblock.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}",
-      "RelativeMoniker": "D:0:0:{2416905E-554A-4F09-96E2-A2BB8DCF57E3}|TestLLMComponents\\TestLLMComponents.csproj|solutionrelative:testllmcomponents\\testllmblock.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}"
+      "AbsoluteMoniker": "D:0:0:{F61D2565-0EF3-67F1-D4EA-C2E6E5B22617}|cstorchcl\\cstorchcl.csproj|c:\\users\\\u0434\u043C\u0438\u0442\u0440\u0438\u0439\\github_repo\\my_pytchon_opencl_lib\\csharp\\cstorchcl\\cstorchcl\\core\\autograd.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}",
+      "RelativeMoniker": "D:0:0:{F61D2565-0EF3-67F1-D4EA-C2E6E5B22617}|cstorchcl\\cstorchcl.csproj|solutionrelative:cstorchcl\\core\\autograd.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}"
     },
     {
-      "AbsoluteMoniker": "D:0:0:{2416905E-554A-4F09-96E2-A2BB8DCF57E3}|TestLLMComponents\\TestLLMComponents.csproj|c:\\users\\\u0434\u043C\u0438\u0442\u0440\u0438\u0439\\github_repo\\my_pytchon_opencl_lib\\csharp\\cstorchcl\\testllmcomponents\\program.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}",
-      "RelativeMoniker": "D:0:0:{2416905E-554A-4F09-96E2-A2BB8DCF57E3}|TestLLMComponents\\TestLLMComponents.csproj|solutionrelative:testllmcomponents\\program.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}"
+      "AbsoluteMoniker": "D:0:0:{F61D2565-0EF3-67F1-D4EA-C2E6E5B22617}|cstorchcl\\cstorchcl.csproj|c:\\users\\\u0434\u043C\u0438\u0442\u0440\u0438\u0439\\github_repo\\my_pytchon_opencl_lib\\csharp\\cstorchcl\\cstorchcl\\core\\neuralnetwork.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}",
+      "RelativeMoniker": "D:0:0:{F61D2565-0EF3-67F1-D4EA-C2E6E5B22617}|cstorchcl\\cstorchcl.csproj|solutionrelative:cstorchcl\\core\\neuralnetwork.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}"
     },
     {
-      "AbsoluteMoniker": "D:0:0:{250AFA78-9395-4C4F-9FBC-B5A5C7D3F42A}|cstorchcl\\cstorchcl.csproj|c:\\users\\\u0434\u043C\u0438\u0442\u0440\u0438\u0439\\github_repo\\my_pytchon_opencl_lib\\csharp\\cstorchcl\\cstorchcl\\compiler\\nnclglob.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}",
-      "RelativeMoniker": "D:0:0:{250AFA78-9395-4C4F-9FBC-B5A5C7D3F42A}|cstorchcl\\cstorchcl.csproj|solutionrelative:cstorchcl\\compiler\\nnclglob.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}"
+      "AbsoluteMoniker": "D:0:0:{F61D2565-0EF3-67F1-D4EA-C2E6E5B22617}|cstorchcl\\cstorchcl.csproj|c:\\users\\\u0434\u043C\u0438\u0442\u0440\u0438\u0439\\github_repo\\my_pytchon_opencl_lib\\csharp\\cstorchcl\\cstorchcl\\core\\sgd.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}",
+      "RelativeMoniker": "D:0:0:{F61D2565-0EF3-67F1-D4EA-C2E6E5B22617}|cstorchcl\\cstorchcl.csproj|solutionrelative:cstorchcl\\core\\sgd.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}"
     },
     {
-      "AbsoluteMoniker": "D:0:0:{250AFA78-9395-4C4F-9FBC-B5A5C7D3F42A}|cstorchcl\\cstorchcl.csproj|c:\\users\\\u0434\u043C\u0438\u0442\u0440\u0438\u0439\\github_repo\\my_pytchon_opencl_lib\\csharp\\cstorchcl\\cstorchcl\\compiler\\hostreturner.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}",
-      "RelativeMoniker": "D:0:0:{250AFA78-9395-4C4F-9FBC-B5A5C7D3F42A}|cstorchcl\\cstorchcl.csproj|solutionrelative:cstorchcl\\compiler\\hostreturner.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}"
+      "AbsoluteMoniker": "D:0:0:{F61D2565-0EF3-67F1-D4EA-C2E6E5B22617}|cstorchcl\\cstorchcl.csproj|c:\\users\\\u0434\u043C\u0438\u0442\u0440\u0438\u0439\\github_repo\\my_pytchon_opencl_lib\\csharp\\cstorchcl\\cstorchcl\\compiler\\nnclglob.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}",
+      "RelativeMoniker": "D:0:0:{F61D2565-0EF3-67F1-D4EA-C2E6E5B22617}|cstorchcl\\cstorchcl.csproj|solutionrelative:cstorchcl\\compiler\\nnclglob.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}"
+    },
+    {
+      "AbsoluteMoniker": "D:0:0:{F61D2565-0EF3-67F1-D4EA-C2E6E5B22617}|cstorchcl\\cstorchcl.csproj|c:\\users\\\u0434\u043C\u0438\u0442\u0440\u0438\u0439\\github_repo\\my_pytchon_opencl_lib\\csharp\\cstorchcl\\cstorchcl\\core\\mselossop.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}",
+      "RelativeMoniker": "D:0:0:{F61D2565-0EF3-67F1-D4EA-C2E6E5B22617}|cstorchcl\\cstorchcl.csproj|solutionrelative:cstorchcl\\core\\mselossop.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}"
+    },
+    {
+      "AbsoluteMoniker": "D:0:0:{736494C8-2D0F-E81F-540A-EB1B4D2386B3}|TestLLMComponents\\TestLLMComponents.csproj|c:\\users\\\u0434\u043C\u0438\u0442\u0440\u0438\u0439\\github_repo\\my_pytchon_opencl_lib\\csharp\\cstorchcl\\testllmcomponents\\testllmblock.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}",
+      "RelativeMoniker": "D:0:0:{736494C8-2D0F-E81F-540A-EB1B4D2386B3}|TestLLMComponents\\TestLLMComponents.csproj|solutionrelative:testllmcomponents\\testllmblock.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}"
     }
   ],
   "DocumentGroupContainers": [
@@ -30,71 +38,98 @@
       "DocumentGroups": [
         {
           "DockedWidth": 200,
-          "SelectedChildIndex": 0,
+          "SelectedChildIndex": 4,
           "Children": [
             {
               "$type": "Document",
-              "DocumentIndex": 0,
-              "Title": "Tensor.cs",
-              "DocumentMoniker": "C:\\Users\\\u0414\u043C\u0438\u0442\u0440\u0438\u0439\\github_repo\\my_pytchon_opencl_lib\\csharp\\cstorchcl\\cstorchcl\\core\\Tensor.cs",
-              "RelativeDocumentMoniker": "cstorchcl\\core\\Tensor.cs",
-              "ToolTip": "C:\\Users\\\u0414\u043C\u0438\u0442\u0440\u0438\u0439\\github_repo\\my_pytchon_opencl_lib\\csharp\\cstorchcl\\cstorchcl\\core\\Tensor.cs",
-              "RelativeToolTip": "cstorchcl\\core\\Tensor.cs",
-              "ViewState": "AgIAAIUAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==",
+              "DocumentIndex": 3,
+              "Title": "SGD.cs",
+              "DocumentMoniker": "C:\\Users\\\u0414\u043C\u0438\u0442\u0440\u0438\u0439\\github_repo\\my_pytchon_opencl_lib\\csharp\\cstorchcl\\cstorchcl\\core\\SGD.cs",
+              "RelativeDocumentMoniker": "cstorchcl\\core\\SGD.cs",
+              "ToolTip": "C:\\Users\\\u0414\u043C\u0438\u0442\u0440\u0438\u0439\\github_repo\\my_pytchon_opencl_lib\\csharp\\cstorchcl\\cstorchcl\\core\\SGD.cs",
+              "RelativeToolTip": "cstorchcl\\core\\SGD.cs",
+              "ViewState": "AgIAAAsAAAAAAAAAAAAwwB8AAABGAAAAAAAAAA==",
               "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000738|",
-              "WhenOpened": "2026-10-30T13:51:33.165Z",
+              "WhenOpened": "2026-10-30T18:41:31.104Z",
+              "IsPinned": true,
+              "EditorCaption": ""
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 1,
+              "Title": "AutoGrad.cs",
+              "DocumentMoniker": "C:\\Users\\\u0414\u043C\u0438\u0442\u0440\u0438\u0439\\github_repo\\my_pytchon_opencl_lib\\csharp\\cstorchcl\\cstorchcl\\core\\AutoGrad.cs",
+              "RelativeDocumentMoniker": "cstorchcl\\core\\AutoGrad.cs",
+              "ToolTip": "C:\\Users\\\u0414\u043C\u0438\u0442\u0440\u0438\u0439\\github_repo\\my_pytchon_opencl_lib\\csharp\\cstorchcl\\cstorchcl\\core\\AutoGrad.cs",
+              "RelativeToolTip": "cstorchcl\\core\\AutoGrad.cs",
+              "ViewState": "AgIAAFMAAAAAAAAAAAA2wIMAAAAvAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000738|",
+              "WhenOpened": "2026-10-30T19:15:37.634Z",
+              "EditorCaption": ""
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 2,
+              "Title": "NeuralNetwork.cs",
+              "DocumentMoniker": "C:\\Users\\\u0414\u043C\u0438\u0442\u0440\u0438\u0439\\github_repo\\my_pytchon_opencl_lib\\csharp\\cstorchcl\\cstorchcl\\core\\NeuralNetwork.cs",
+              "RelativeDocumentMoniker": "cstorchcl\\core\\NeuralNetwork.cs",
+              "ToolTip": "C:\\Users\\\u0414\u043C\u0438\u0442\u0440\u0438\u0439\\github_repo\\my_pytchon_opencl_lib\\csharp\\cstorchcl\\cstorchcl\\core\\NeuralNetwork.cs",
+              "RelativeToolTip": "cstorchcl\\core\\NeuralNetwork.cs",
+              "ViewState": "AgIAADEAAAAAAAAAAAD4v0MAAAArAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000738|",
+              "WhenOpened": "2026-10-30T19:13:58.127Z",
+              "EditorCaption": ""
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 5,
+              "Title": "MseLossOp.cs",
+              "DocumentMoniker": "C:\\Users\\\u0414\u043C\u0438\u0442\u0440\u0438\u0439\\github_repo\\my_pytchon_opencl_lib\\csharp\\cstorchcl\\cstorchcl\\core\\MseLossOp.cs",
+              "RelativeDocumentMoniker": "cstorchcl\\core\\MseLossOp.cs",
+              "ToolTip": "C:\\Users\\\u0414\u043C\u0438\u0442\u0440\u0438\u0439\\github_repo\\my_pytchon_opencl_lib\\csharp\\cstorchcl\\cstorchcl\\core\\MseLossOp.cs",
+              "RelativeToolTip": "cstorchcl\\core\\MseLossOp.cs",
+              "ViewState": "AgIAAAEAAAAAAAAAAAA7wBkAAAAAAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000738|",
+              "WhenOpened": "2026-10-30T19:00:30.588Z",
+              "EditorCaption": ""
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 0,
+              "Title": "Program.cs",
+              "DocumentMoniker": "C:\\Users\\\u0414\u043C\u0438\u0442\u0440\u0438\u0439\\github_repo\\my_pytchon_opencl_lib\\csharp\\cstorchcl\\TrainTest\\Program.cs",
+              "RelativeDocumentMoniker": "TrainTest\\Program.cs",
+              "ToolTip": "C:\\Users\\\u0414\u043C\u0438\u0442\u0440\u0438\u0439\\github_repo\\my_pytchon_opencl_lib\\csharp\\cstorchcl\\TrainTest\\Program.cs*",
+              "RelativeToolTip": "TrainTest\\Program.cs*",
+              "ViewState": "AgIAABIAAAAAAAAAAAAAABwAAABMAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000738|",
+              "WhenOpened": "2026-10-30T18:43:37.302Z",
               "EditorCaption": ""
             },
             {
               "$type": "Document",
               "DocumentIndex": 4,
-              "Title": "HostReturner.cs",
-              "DocumentMoniker": "C:\\Users\\\u0414\u043C\u0438\u0442\u0440\u0438\u0439\\github_repo\\my_pytchon_opencl_lib\\csharp\\cstorchcl\\cstorchcl\\compiler\\HostReturner.cs",
-              "RelativeDocumentMoniker": "cstorchcl\\compiler\\HostReturner.cs",
-              "ToolTip": "C:\\Users\\\u0414\u043C\u0438\u0442\u0440\u0438\u0439\\github_repo\\my_pytchon_opencl_lib\\csharp\\cstorchcl\\cstorchcl\\compiler\\HostReturner.cs",
-              "RelativeToolTip": "cstorchcl\\compiler\\HostReturner.cs",
-              "ViewState": "AgIAAAkAAAAAAAAAAAAuwBAAAAAeAAAAAAAAAA==",
-              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000738|",
-              "WhenOpened": "2026-10-30T13:33:03.387Z",
-              "EditorCaption": ""
-            },
-            {
-              "$type": "Document",
-              "DocumentIndex": 3,
               "Title": "NnClGlob.cs",
               "DocumentMoniker": "C:\\Users\\\u0414\u043C\u0438\u0442\u0440\u0438\u0439\\github_repo\\my_pytchon_opencl_lib\\csharp\\cstorchcl\\cstorchcl\\compiler\\NnClGlob.cs",
               "RelativeDocumentMoniker": "cstorchcl\\compiler\\NnClGlob.cs",
               "ToolTip": "C:\\Users\\\u0414\u043C\u0438\u0442\u0440\u0438\u0439\\github_repo\\my_pytchon_opencl_lib\\csharp\\cstorchcl\\cstorchcl\\compiler\\NnClGlob.cs",
               "RelativeToolTip": "cstorchcl\\compiler\\NnClGlob.cs",
-              "ViewState": "AgIAAMYAAAAAAAAAAAAiwNIAAAAMAAAAAAAAAA==",
+              "ViewState": "AgIAAAoDAAAAAAAAAIAzwBwDAAAeAAAAAAAAAA==",
               "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000738|",
               "WhenOpened": "2026-10-30T13:10:37.343Z",
               "EditorCaption": ""
             },
             {
               "$type": "Document",
-              "DocumentIndex": 1,
+              "DocumentIndex": 6,
               "Title": "TestLLMBlock.cs",
               "DocumentMoniker": "C:\\Users\\\u0414\u043C\u0438\u0442\u0440\u0438\u0439\\github_repo\\my_pytchon_opencl_lib\\csharp\\cstorchcl\\TestLLMComponents\\TestLLMBlock.cs",
               "RelativeDocumentMoniker": "TestLLMComponents\\TestLLMBlock.cs",
-              "ToolTip": "C:\\Users\\\u0414\u043C\u0438\u0442\u0440\u0438\u0439\\github_repo\\my_pytchon_opencl_lib\\csharp\\cstorchcl\\TestLLMComponents\\TestLLMBlock.cs*",
-              "RelativeToolTip": "TestLLMComponents\\TestLLMBlock.cs*",
+              "ToolTip": "C:\\Users\\\u0414\u043C\u0438\u0442\u0440\u0438\u0439\\github_repo\\my_pytchon_opencl_lib\\csharp\\cstorchcl\\TestLLMComponents\\TestLLMBlock.cs",
+              "RelativeToolTip": "TestLLMComponents\\TestLLMBlock.cs",
               "ViewState": "AgIAABcAAAAAAAAAAIA4wDQAAABbAAAAAAAAAA==",
               "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000738|",
               "WhenOpened": "2026-10-30T13:02:53.734Z",
-              "EditorCaption": ""
-            },
-            {
-              "$type": "Document",
-              "DocumentIndex": 2,
-              "Title": "Program.cs",
-              "DocumentMoniker": "C:\\Users\\\u0414\u043C\u0438\u0442\u0440\u0438\u0439\\github_repo\\my_pytchon_opencl_lib\\csharp\\cstorchcl\\TestLLMComponents\\Program.cs",
-              "RelativeDocumentMoniker": "TestLLMComponents\\Program.cs",
-              "ToolTip": "C:\\Users\\\u0414\u043C\u0438\u0442\u0440\u0438\u0439\\github_repo\\my_pytchon_opencl_lib\\csharp\\cstorchcl\\TestLLMComponents\\Program.cs",
-              "RelativeToolTip": "TestLLMComponents\\Program.cs",
-              "ViewState": "AgIAABIAAAAAAAAAAAAiwB4AAAAnAAAAAAAAAA==",
-              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000738|",
-              "WhenOpened": "2026-10-30T13:02:08.729Z",
               "EditorCaption": ""
             }
           ]
