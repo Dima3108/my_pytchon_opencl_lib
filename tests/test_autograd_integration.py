@@ -13,8 +13,7 @@ from core.module import Module
 from core.layers import Linear
 from compiler.nncl_compiler import LocalRunner
 from compiler.nncl_glob import NnClGlob
-
-# Симулируем легкий математический модуль nnclloc для синтаксиса лямбды внутри runner
+# Имитируем легкий математический модуль nnclloc для синтаксиса лямбды внутри runner
 class DummyNnclLoc:
     def sigmoid(self, x): return x
     def tanh(self, x): return x
@@ -23,16 +22,14 @@ nnclloc = DummyNnclLoc()
 class JitIntegrationModel(Module):
     """
     Тестовая модель, которая объединяет глобальный Linear слой 
-    и последующий fused-блок LocalRunner.
+    и последующий fused-блок LocalRunner через метод __call2__.
     """
     def __init__(self, d_in, d_out, ctx, queue):
         super().__init__(ctx, queue)
         # Инициализируем глобальные операции с привязкой к единому контексту автограда
-        self.nnclglob = NnClGlob(ctx, queue, autograd_ctx=self.autograd_ctx)
-        
-        # Инициализируем локальный раннер в режиме обучения
-        self.runner = LocalRunner(ctx, queue, is_training=True)
-        
+        self.nnclglob = NnClGlob(ctx, queue, autograd_ctx=self.autograd_ctx)    
+        # Инициализируем локальный раннер в режиме обучения и жестко передаем autograd_ctx
+        self.runner = LocalRunner(ctx, queue, is_training=True, autograd_ctx=self.autograd_ctx)
         # Создаем полносвязный слой, веса которого должны получить градиент
         self.linear_layer = Linear(d_in, d_out, self.nnclglob)
 
@@ -41,20 +38,17 @@ class JitIntegrationModel(Module):
         proj_vectors_3d = self.linear_layer(x)
         
         # 2. Виртуальный squeeze для перевода 3D -> 2D (геометрия memory_state)
-        # (Обязательно пробрасывает autograd_ctx в новый тензор)
         gate_vectors = proj_vectors_3d.squeeze(0)
         gate_vectors.autograd_ctx = self.autograd_ctx
-        
         # Выделяем целевой буфер под выходной тензор JIT-блока
         output = Tensor(memory_state.shape, self.ctx, self.queue)
         output.require_grad()
-        # Привязываем его к нашей единой цепочке команд
         output.autograd_ctx = self.autograd_ctx
-
-        # 3. ТОТАЛЬНЫЙ МОНОЛИТНЫЙ JIT-ФЬЮЗИНГ
-        # Вызов __call__ скомпилирует ядро, сохранит имена в _captured_inputs/_outputs
-        # и отправит callback своего runner.run_backward() в autograd_ctx
-        self.runner(f"""
+        #output.require_grad()
+        gate_A=Tensor(memory_state.shape,self.ctx,self.queue)
+        # 3. ТОТАЛЬНЫЙ МОНОЛИТНЫЙ JIT-ФЬЮЗИНГ ЧЕРЕЗ __call2__
+        # Вызов скомпилирует раздельные ядра, выполнит forward и зарегистрирует backward callback
+        self.runner.__call2__(f"""
             gate_A = nnclloc.sigmoid(gate_vectors)
             memory_state = memory_state * gate_A
             output = memory_state + gate_A
@@ -68,12 +62,19 @@ def test_skvoznoi_autograd_pipeline():
     print("🚀 ЗАПУСК ИНТЕГРАЦИОННОГО ТЕСТА: ПЕРЕДАЧА ГРАДИЕНТОВ ИЗ LOCALRUNNER В LINEAR")
     print("="*80)
 
-    # 1. Инициализация единого OpenCL окружения
+    # 1. Инициализация OpenCL окружения
+    # 1. Инициализация OpenCL окружения
     platforms = cl.get_platforms()
     device = platforms[0].get_devices()[0]
     ctx = cl.Context([device])
     queue = cl.CommandQueue(ctx)
+    
+    # === ДОБАВЬТЕ ЭТУ СТРОКУ СЮДА ДЛЯ РЕГИСТРАЦИИ ОЧЕРЕДИ ===
+    from core.queue_registry import DeviceQueueRegistry
+    DeviceQueueRegistry.set_current(queue)
+    
     print(f"Тестирование на устройстве: {device.name}")
+
 
     # Размеры: Batch=1, Length=4, d_model=8
     B, L, D = 1, 4, 8
@@ -89,24 +90,28 @@ def test_skvoznoi_autograd_pipeline():
 
     # Создаем модель и вытаскиваем начальные веса для PyTorch
     model = JitIntegrationModel(d_in=D, d_out=D, ctx=ctx, queue=queue)
+    model.train()
     w_linear_init = model.linear_layer.weight.to_numpy()
-
+    model.linear_layer.weight.require_grad() 
     # Шаг 1: Прямой ход нашей модели
     output_cl = model(x_cl, memory_cl)
-
+    from core.queue_registry import DeviceQueueRegistry
+    active_queue = DeviceQueueRegistry.get_current()
     # Шаг 2: Имитация прихода градиента ошибки (Loss Backward)
     grad_output = np.ones((B * L, D), dtype=np.float32)
-    cl.enqueue_copy(queue, output_cl.grad_buffer, grad_output)
-    queue.finish()
-
+    cl.enqueue_copy(active_queue, output_cl.grad_buffer, grad_output)
+    #queue.finish()
+    active_queue.finish()
     # Шаг 3: Развертывание ЕДИНОЙ очереди команд автограда
-    # Сначала выполнится runner.run_backward(), заполнив grad_buffer у gate_vectors.
-    # Затем выполнится bmm_backward слоев выше, заполнив grad_buffer у весов Linear.
+    # 1. Вызовется runner_step_backward_callback() (вычислит градиенты в раннере)
+    # 2. Вызовется bmm_backward слоев выше (вычислит дельты весов Linear)
     model.autograd_ctx.run_backward()
 
     # Скачиваем полученный градиент весов из VRAM
     from compiler.host_returner import HostReturner
     cl_grad_w_linear = HostReturner.to_cpu_grad(model.linear_layer.weight)
+    #cl_grad_w_linear=model.linear_layer.weight
+    print(f"'{cl_grad_w_linear[:10]}'\n")
 
 
     # 3. ЭТАЛОННЫЙ КОНТУР В PYTORCH
@@ -136,12 +141,11 @@ def test_skvoznoi_autograd_pipeline():
     try:
         np.testing.assert_allclose(cl_grad_w_linear, pytorch_grad_w_linear, rtol=1e-4, atol=1e-4)
         print("✅ УСПЕХ: Градиенты весов Linear слоя полностью совпали с PyTorch!")
-        print("🔗 Связка AutogradContext -> LocalRunner -> NnClGlob работает корректно.")
+        print("🔗 Связка AutogradContext -> LocalRunner (__call2__) -> NnClGlob работает корректно.")
     except AssertionError as e:
         print("❌ ОШИБКА: Обнаружено расхождение в градиентах весов!")
-        print(f"Захваченные входы раннера: {model.runner._captured_inputs}")
-        print(f"Захваченные выходы раннера: {model.runner._captured_outputs}")
         raise e
 
 if __name__ == "__main__":
     test_skvoznoi_autograd_pipeline()
+

@@ -4,7 +4,7 @@ import re
 import pyopencl as cl
 import numpy as np
 from core.tensor import Tensor
-
+IS_DEBUG=True
 basecl_path = os.path.join(os.path.dirname(__file__), '..', 'cl_kernels', 'base_cl_functions.cl')
 with open(basecl_path, 'r', encoding='utf-8') as f:
     BASE_CL_FUNCTIONS = f.read()
@@ -18,7 +18,7 @@ class JITProgramCache:
         return cls._cache[kernel_code]
 
 class LocalRunner:
-    def __init__(self, ctx, queue, is_training=False):
+    def __init__(self, ctx, queue, is_training=False,autograd_ctx=None):
         self.ctx = ctx
         self.queue = queue
         self.is_training = is_training
@@ -26,6 +26,7 @@ class LocalRunner:
         # --- НОВЫЕ АТРИБУТЫ ДЛЯ СВЯЗИ СО СЛОЯМИ ВЫШЕ ---
         self._captured_inputs = set()   # Имена тензоров-аргументов (справа от =)
         self._captured_outputs = set()  # Имена изменившихся тензоров (слева от =)
+        self._autograd_ctx=autograd_ctx
         # Автодетекция размера варпа
         dummy_code = "__kernel void dummy() {}"
         dummy_prg = cl.Program(self.ctx, dummy_code).build()
@@ -351,6 +352,7 @@ class LocalRunner:
             self._captured_inputs.add(token_name)
 
     def __call2__(self, program_text: str):
+        autograd_ctx=self._autograd_ctx #захватываем ссылку на autograd
         # 1. Захватываем область видимости из фрейма вызова forward()
         caller_locals = sys._getframe(1).f_locals
         caller_globals = sys._getframe(1).f_globals
@@ -363,10 +365,12 @@ class LocalRunner:
         # Разделяем входную строку по символу переноса "\n"
         raw_lines = program_text.strip().split('\n')
         compiled_statements = []
+        compiled_backward_statements = []  # Для накопления строк обратного прохода
         detected_tensors_set = set()
 
         for line in raw_lines:
-            cleaned_line = line.strip()
+            #line=line+"\n"
+            cleaned_line = line.strip()+"\n"
             if not cleaned_line or cleaned_line.startswith('#'):
                 continue
 
@@ -386,7 +390,8 @@ class LocalRunner:
                     cleaned_line = re.sub(r'\b' + token + r'\b', f"{val}", cleaned_line)
 
             # --- БЛОК ВАЛИДАЦИИ ИНСТРУКЦИИ ---
-            
+            if IS_DEBUG:
+                print(f"[compiler_debug]строка полсе пред обработки (до выявления токенов)='{cleaned_line}'")
             # Шаг 1: Проверяем наличие хотя бы одного реального тензора в строке
             line_tokens = re.findall(r'\b[a-zA-Z_][a-zA-Z0-9_]*\b', cleaned_line)
             has_tensor = False
@@ -438,28 +443,93 @@ class LocalRunner:
                 raise ValueError(f"Ошибка валидации: Не удалось определить целевой тензор в строке '{line}'.")
 
             self._captured_outputs.add(target_tensor_name)
+            # --- ГЕНЕРАЦИЯ СТРОКИ ДЛЯ BACKWARD ПО ТВОЕМУ ПЛАНУ ---
+            # --- ГЕНЕРАЦИЯ СТРОКИ ДЛЯ BACKWARD ПО ТВОЕМУ ПЛАНУ ---
+            if self.is_training:
+                # Дублируем очищенную строку (например, Y = nn_tanh(X))
+                bwd_line = cleaned_line
+                
+                if "nn_dropout" in bwd_line:
+                    # Исключение для dropout: заменяем функцию на nn_dropout_backward
+                    bwd_line = bwd_line.replace("nn_dropout", "nn_dropout_backward")
+                    # Строка 454: Берем правую часть split('[', 1)[1] и убираем лишние скобки
+                    right_side_drop = bwd_line.split('=', 1)[1].strip()
+                    compiled_bwd = f"if (tid < {target_tensor_name}Size) {{ grad_{target_tensor_name}[tid] += {right_side_drop}; }}"
+                    compiled_backward_statements.append(compiled_bwd)
+                else:
+                    # Стандартный паттерн: ищем буквы между "nn_" и "("
+                    match_func = re.search(r'nn_([a-zA-Z0-9_]+)\(', bwd_line)
+                    if match_func:
+                        func_name = match_func.group(1)  # получили к примеру 'sigmoid' или 'tanh'
+                        bwd_line = bwd_line.replace(f"nn_{func_name}(", f"nn_{func_name}_backward(")
+                        
+                        # Находим аргумент внутри скобок, чтобы узнать имя входного тензора X
+                        match_args = re.search(r'nn_[a-zA-Z0-9_]+_backward\((.*?)\)', bwd_line)
+                        if match_args:
+                            inner_arg = match_args.group(1).split(',')[0].strip() # имя тензора X
+                            bwd_line = bwd_line.replace(")", f", grad_{target_tensor_name})")
+                            
+                            # Перестраиваем выражение: целевым становится градиент входного тензора
+                            right_side_expr = bwd_line.split('=', 1)[1].strip()
+                            compiled_bwd = f"if (tid < {inner_arg}Size) {{ grad_{inner_arg}[tid] += {right_side_expr}; }}"
+                            compiled_backward_statements.append(compiled_bwd)
+                    else:
+                        # === УМНЫЙ СИМВОЛЬНЫЙ ДИФФЕРЕНЦИАТОР ДЛЯ БАЗОВОЙ МАТЕМАТИКИ (*, +, -, /) ===
+                        # Извлекаем все имена тензоров-операндов из правой части выражения
+                        operands = [t for t in re.findall(r'\b[a-zA-Z_][a-zA-Z0-9_]*\b', right_part) 
+                                    if t in caller_locals and isinstance(caller_locals[t], Tensor)]
+                        
+                        if len(operands) == 2:
+                            u, v = operands[0], operands[1]
+                            
+                            if '*' in right_part:
+                                # Производная произведения: grad_u += grad_target * v; grad_v += grad_target * u;
+                                compiled_bwd_u = f"if (tid < {u}Size) {{ grad_{u}[tid] += grad_{target_tensor_name}[tid] * {v}[tid]; }}"
+                                compiled_bwd_v = f"if (tid < {v}Size) {{ grad_{v}[tid] += grad_{target_tensor_name}[tid] * {u}[tid]; }}"
+                                compiled_backward_statements.append(compiled_bwd_u)
+                                compiled_backward_statements.append(compiled_bwd_v)
+                                
+                            elif '+' in right_part or '-' in right_part:
+                                # Производная суммы/разности: градиент передается 1 к 1
+                                sign = "-" if '-' in right_part else ""
+                                compiled_bwd_u = f"if (tid < {u}Size) {{ grad_{u}[tid] += grad_{target_tensor_name}[tid]; }}"
+                                compiled_bwd_v = f"if (tid < {v}Size) {{ grad_{v}[tid] += {sign}grad_{target_tensor_name}[tid]; }}"
+                                compiled_backward_statements.append(compiled_bwd_u)
+                                compiled_backward_statements.append(compiled_bwd_v)
+                        
+                        elif len(operands) == 1:
+                            # Унарная операция
+                            u = operands[0]
+                            compiled_bwd_u = f"if (tid < {u}Size) {{ grad_{u}[tid] += grad_{target_tensor_name}[tid]; }}"
+                            compiled_backward_statements.append(compiled_bwd_u)
 
-        # === РЕАЛИЗАЦИЯ УМНОГО ВЕКТОРНОГО ФИЛЬТРА ЗАМЕН ДЛЯ ТЕНЗОРОВ ===
-        # Набор операторов и символов из вашего ТЗ (включая пробел)
-        operators = [' ', '-', '+', '=', ',', '(', '/', '%', ')']
-        
-        # Обходим уникальные имена тензоров, обнаруженные в строке
-        for t in detected_tensors_set:
-            # 1. Формируем вектор пар: имя + оператор/символ
-            pattern_vector = [f"{t}{op}" for op in operators]
-            
-            # 2. Формируем параллельный вектор замен: имя[tid] + оператор/символ
-            replacement_vector = [f"{t}[tid]{op}" for op in operators]
-            
-            # 3. Выполняем алгоритм контекстной замены:
-            # Пока комбинация имя+оператор встречается в строке, производим замену
-            for pattern, replacement in zip(pattern_vector, replacement_vector):
-                while pattern in cleaned_line:
-                    cleaned_line = cleaned_line.replace(pattern, replacement)
+ 
 
-        # Оборачиваем валидную строку в Си-конструкцию с проверкой границ
-        compiled_statement = f"if (tid < {target_tensor_name}Size) {{ {cleaned_line}; }}"
-        compiled_statements.append(compiled_statement)
+                compiled_backward_statements.append(compiled_bwd)
+                # === РЕАЛИЗАЦИЯ УМНОГО ВЕКТОРНОГО ФИЛЬТРА ЗАМЕН ДЛЯ ТЕНЗОРОВ ===
+                # Набор операторов и символов из вашего ТЗ (включая пробел)
+                operators = [' ', '-', '+', '=', ',', '(', '/', '%', ')','\n','{','}']
+                #cleaned_line=cleaned_line+'\n'
+                # Обходим уникальные имена тензоров, обнаруженные в строке
+                if IS_DEBUG:
+                    print(f"[debug_compiler]для строки '{cleaned_line}' найденной {len(detected_tensors_set)} тензоров")
+                for t in detected_tensors_set:
+                    # 1. Формируем вектор пар: имя + оператор/символ
+                    pattern_vector = [f"{t}{op}" for op in operators]
+                    
+                    # 2. Формируем параллельный вектор замен: имя[tid] + оператор/символ
+                    replacement_vector = [f"{t}[tid]{op}" for op in operators]
+                    
+                    # 3. Выполняем алгоритм контекстной замены:
+                    # Пока комбинация имя+оператор встречается в строке, производим замену
+                    for pattern, replacement in zip(pattern_vector, replacement_vector):
+                        cleaned_line = cleaned_line.replace(pattern, replacement)
+                cleaned_line=cleaned_line.strip()
+                # Оборачиваем валидную строку в Си-конструкцию с проверкой границ
+                compiled_statement = f"if (tid < {t}Size) {{ {cleaned_line}; }}"+"\n"
+                if IS_DEBUG:
+                    print(f"[debug_compiler_log]результат компиляции строки:'{compiled_statement}'\n")
+                compiled_statements.append(compiled_statement)
 
         # Собираем входные тензоры-аргументы (все задействованные тензоры минус те, что перезаписаны)
         for t in detected_tensors_set:
@@ -468,45 +538,145 @@ class LocalRunner:
                     self._captured_inputs.add(t)
 
         # --- СБОРКА ФИНАЛЬНОГО ТЕКСТА КЕРНЕЛА ---
+        # СТРОКА 509: НАЧАЛО КРИТИЧЕСКОГО ИЗМЕНЕНИЯ РАЗДЕЛЕНИЯ АРГУМЕНТОВ
         kernel_hash = abs(hash(program_text))
         kernel_name = f"text_forward_{kernel_hash}"
 
-        # Формируем список аргументов ядра динамически на основе обнаруженных тензоров
-        kernel_args = []
+        # 1. ЧИСТЫЙ ЧЕТКИЙ НАБОР ДЛЯ FORWARD (ТОЛЬКО ДАННЫЕ И РАЗМЕРЫ)
+        kernel_args_forward = []
         cl_buffers_call_fwd = []
         max_elements = 1
+
+        # 2. ОТДЕЛЬНЫЙ СТРОГИЙ НАБОР ДЛЯ BACKWARD (ДАННЫЕ + РАЗМЕРЫ + ГРАДИЕНТЫ)
+        kernel_args_backward = []
+        cl_buffers_call_bwd = []
 
         for tensor_name in sorted(list(detected_tensors_set)):
             tensor_obj = caller_locals[tensor_name]
             if tensor_obj.size > max_elements:
                 max_elements = tensor_obj.size
 
-            # Добавляем указатель на буфер данных и переменную размера
-            kernel_args.append(f"__global float* {tensor_name}")
-            kernel_args.append(f"const int {tensor_name}Size")
+            # Базовые аргументы для Forward
+            kernel_args_forward.append(f"__global float* {tensor_name}")
+            kernel_args_forward.append(f"const int {tensor_name}Size")
             cl_buffers_call_fwd.append(tensor_obj.data_buffer)
             cl_buffers_call_fwd.append(np.int32(tensor_obj.size))
 
-        args_str = ", ".join(kernel_args)
+            # Изолированные аргументы для Backward (формируются только если обучаемся)
+            if self.is_training:
+                kernel_args_backward.append(f"__global float* {tensor_name}")
+                kernel_args_backward.append(f"const int {tensor_name}Size")
+                kernel_args_backward.append(f"__global float* grad_{tensor_name}")
+                
+                cl_buffers_call_bwd.append(tensor_obj.data_buffer)
+                cl_buffers_call_bwd.append(np.int32(tensor_obj.size))
+                cl_buffers_call_bwd.append(tensor_obj.grad_buffer)
+
+        # Компилируем и запускаем FORWARD ядро
+        args_fwd_str = ", ".join(kernel_args_forward)
         forward_statements_str = "\n    ".join(compiled_statements)
 
-        # Собираем монолитный Си-код
         full_forward_code = f"""
-{BASE_CL_FUNCTIONS}
-
-__kernel void {kernel_name}({args_str}) {{
-    int tid = {self.warp_size} * get_global_id(0) + get_global_id(1);
-    {forward_statements_str}
-}}
-"""
-        # Сборка сетки потоков и выполнение на GPU
+        {BASE_CL_FUNCTIONS}
+        __kernel void {kernel_name}({args_fwd_str}) {{
+            int tid = {self.warp_size} * get_global_id(0) + get_global_id(1);\n
+        {forward_statements_str}
+        }}
+        """
         total_count = int(np.ceil(max_elements / float(self.warp_size)) * self.warp_size)
         global_size = (total_count // self.warp_size, self.warp_size)
-
+        if IS_DEBUG and False:
+            print(f"[debug_log] ядро прямого прохода к выполнению:\n'{forward_statements_str}'\n")
         program = JITProgramCache.get_or_compile(self.ctx, full_forward_code)
         kernel = getattr(program, kernel_name)
         kernel(self.queue, global_size, None, *cl_buffers_call_fwd)
         self.queue.finish()
+        if IS_DEBUG:
+            print(f"[debug_log]прямой проход завершен!\n")
+        # --- ПОЛНОСТЬЮ ИЗОЛИРОВАННАЯ СБОРКА И КЭШИРОВАНИЕ BACKWARD ---
+        if self.is_training and compiled_backward_statements:
+            backward_kernel_name = f"text_backward_{kernel_hash}"
+            
+            # Применяем векторный фильтр замен [tid] для строк backward
+            processed_bwd_statements = []
+            operators = [' ', '-', '+', '=', ',', '(', '/', '%', ')']
+            for bwd_stmt in compiled_backward_statements:
+                for t in detected_tensors_set:
+                    for target_token in [t, f"grad_{t}"]:
+                        pattern_vector = [f"{target_token}{op}" for op in operators]
+                        replacement_vector = [f"{target_token}[tid]{op}" for op in operators]
+                        for pattern, replacement in zip(pattern_vector, replacement_vector):
+                            bwd_stmt = bwd_stmt.replace(pattern, replacement)
+                processed_bwd_statements.append(bwd_stmt)
+
+            backward_statements_str = "\n    ".join(processed_bwd_statements)
+            args_bwd_str = ", ".join(kernel_args_backward)
+            
+            full_backward_code = f"""
+            {BASE_CL_FUNCTIONS}
+            __kernel void {backward_kernel_name}({args_bwd_str}) {{
+                int tid = {self.warp_size} * get_global_id(0) + get_global_id(1);
+                {backward_statements_str}
+            }}
+            """
+            # === ПЕРЕНОСИМ КОМПИЛЯЦИЮ СЮДА (НА ЭТАП FORWARD) ===
+            # Компилируем программу обратного прохода заранее, пока очередь полностью стабильна
+            bwd_program_compiled = JITProgramCache.get_or_compile(self.ctx, full_backward_code)
+            bwd_kernel_compiled = getattr(bwd_program_compiled, backward_kernel_name)
+
+            # Делаем снапшоты только физических буферов и готового скомпилированного ядра
+            captured_buffers = list(cl_buffers_call_bwd)
+            captured_global_size = global_size
+            
+            # Создаем чистый ленивый callback для AutogradContext
+            # СТРОКА 593: НАЧАЛО БЛОКА ПЕРЕХВАТА ОШИБОК ИСПОЛНЕНИЯ
+            def runner_step_backward_callback():
+                print(f"\n[compiler_debug] ВЫЗВАН ОБРАТНЫЙ ПРОХОД JIT-БЛОКА!")
+                
+                from core.queue_registry import DeviceQueueRegistry
+                active_queue = DeviceQueueRegistry.get_current()
+                
+                # 1. ЗАПУСКАЕМ ЯДРО И ПЕРЕХВАТЫВАЕМ ОБЪЕКТ СОБЫТИЯ (event)
+                evt = bwd_kernel_compiled(active_queue, captured_global_size, None, *captured_buffers)
+                
+                # В OpenCL ядра выполняются асинхронно. Ждем завершения конкретно этого ядра через event
+                try:
+                    evt.wait()  # Блокируем поток до завершения ядра на GPU
+                    
+                    # 2. АНАЛОГ cudaStatus: Проверяем статус выполнения команды
+                    status = evt.command_execution_status
+                    if status < 0:
+                        # Словарь базовых аппаратных кодов ошибок OpenCL
+                        cl_errors = {
+                            -5: "CL_OUT_OF_RESOURCES (Закончилась видеопамять VRAM или нарушены лимиты регистров)",
+                            -14: "CL_INVALID_CONTEXT",
+                            -36: "CL_INVALID_COMMAND_QUEUE",
+                            -52: "CL_INVALID_KERNEL_ARGS (Количество аргументов Python не совпало с Си-сигнатурой ядра)",
+                            -9999: "NVIDIA_ILLEGAL_MEMORY_ACCESS (Ядро попыталось прочитать или записать данные за пределами массива [tid])"
+                        }
+                        err_text = cl_errors.get(status, f"Неизвестный код ошибки OpenCL: {status}")
+                        raise RuntimeError(f"⚠️ GPU CRASH: Ошибка выполнения Си-ядра обратного прохода! Статус: {err_text}")
+                        
+                except Exception as e:
+                    print(f"\n[compiler_debug] ❌ Аппаратный сбой во время работы backward ядра на GPU:")
+                    print(f"Сгенерированный текст Си-кода, вызвавшего падение:\n{full_backward_code}")
+
+                    raise e
+                
+                # Если событие прошло успешно, безопасный finish очереди уже не упадет
+                active_queue.finish()
+                print("[compiler_debug] Обратный проход JIT-блока успешно завершен на GPU.")
+            # СТРОКА 610: КОНЕЦ БЛОКА ПЕРЕХВАТА ОШИБОК ИСПОЛНЕНИЯ
+
+            # Гарантированная отправка в Синглтон (убираем весь старый блок со страниц 5-6)
+            from core.autograd import AutogradContext
+            try:
+                AutogradContext.get_current().register_backward(runner_step_backward_callback)
+            except RuntimeError:
+                # Фолбэк для изолированных тестов без Синглтона
+                self.backward_stack.append((captured_code, backward_kernel_name, captured_buffers, captured_global_size))
+
+
 
 
 
