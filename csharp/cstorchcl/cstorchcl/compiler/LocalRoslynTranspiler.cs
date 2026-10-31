@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Text;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
@@ -15,13 +16,21 @@ namespace cstorchcl.compiler
         public HashSet<string> DiscoveredTensors { get; } = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         private Dictionary<string, float> _externalConstants;
 
-        public (string forwardSource, string backwardSource) TranslateWithGrad(string pseudoCode, Dictionary<string, float> constants)
+        // Словарь для быстрого доступа к метаданным тензоров во время обхода AST
+        private Dictionary<string, core.Tensor> _tensorMeta;
+
+        public (string forwardSource, string backwardSource) TranslateWithGrad(
+            string pseudoCode,
+            Dictionary<string, float> constants,
+            Dictionary<string, core.Tensor> tensors)
         {
             _externalConstants = constants ?? new Dictionary<string, float>();
+            _tensorMeta = tensors ?? throw new ArgumentNullException(nameof(tensors));
+
             _bodyCode.Clear();
             _backwardBodyCode.Clear();
             DiscoveredTensors.Clear();
-
+            OutputTensorNames.Clear(); // Очищаем список выходов перед новым проходом
             SyntaxTree tree = CSharpSyntaxTree.ParseText(pseudoCode);
             CompilationUnitSyntax root = tree.GetCompilationUnitRoot();
             Visit(root);
@@ -49,40 +58,115 @@ inline float nn_dropout_backward(float grad_out, float p, int tid, unsigned int 
 
 ";
 
+            // Вычисляем максимальный ранг (количество осей) среди всех обнаруженных тензоров
+            var activeTensors = DiscoveredTensors.Select(name => _tensorMeta[name]).ToList();
+            int maxRank = activeTensors.Max(t => t.Shape.Length);
+
+            // За эталонную сетку берем форму самого большого тензора (у которого ранг максимален)
+            var maxTensor = activeTensors.First(t => t.Shape.Length == maxRank);
+            int[] maxShape = maxTensor.Shape;
+
+            // --- ГЕНЕРАЦИЯ ДЕКОДЕРА КООРДИНАТ (Broadcasting Core) ---
+            var coordDecoder = new StringBuilder();
+            coordDecoder.Append("    // Восстановление многомерных координат из плоского tid\n");
+            coordDecoder.Append($"    int rem = tid;\n");
+
+            // Генерируем переменные координат: dim_0, dim_1...
+            for (int i = maxRank - 1; i >= 0; i--)
+            {
+                if (i > 0)
+                {
+                    coordDecoder.Append($"    int dim_{i} = rem % {maxShape[i]};\n");
+                    coordDecoder.Append($"    rem /= {maxShape[i]};\n");
+                }
+                else
+                {
+                    coordDecoder.Append($"    int dim_{i} = rem;\n");
+                }
+            }
+            coordDecoder.Append("\n");
+
+            // --- ГЕНЕРАЦИЯ ИНДЕКСОВ ЧТЕНИЯ ДЛЯ КАЖДОГО ТЕНЗОРА ---
+            var indexCalculators = new StringBuilder();
+            indexCalculators.Append("    // Вычисление смещений с учетом правил Broadcasting\n");
+            foreach (var name in DiscoveredTensors)
+            {
+                var t = _tensorMeta[name];
+                indexCalculators.Append($"    int idx_{name} = 0;\n");
+
+                // Выравниваем оси тензора по правому краю относительно максимального ранга
+                int rankDiff = maxRank - t.Shape.Length;
+
+                for (int i = 0; i < t.Shape.Length; i++)
+                {
+                    int targetMaxDimIdx = i + rankDiff;
+
+                    // ПРАВИЛО BROADCASTING: если размерность оси равна 1, 
+                    // то индекс по этой оси всегда 0, шаг зануляется (умножение на 0)
+                    if (t.Shape[i] == 1)
+                    {
+                        indexCalculators.Append($"    idx_{name} += 0 * {t.Strides[i]};\n");
+                    }
+                    else
+                    {
+                        // Иначе смещаемся на координату эталонной сетки, умноженную на stride оси тензора
+                        indexCalculators.Append($"    idx_{name} += dim_{targetMaxDimIdx} * {t.Strides[i]};\n");
+                    }
+                }
+                // Защита от выхода за физические границы памяти
+                indexCalculators.Append($"    idx_{name} = min(idx_{name}, {t.Size} - 1);\n\n");
+            }
+
             // --- СБОРКА СТРОКИ ЯДРА FORWARD ---
             var fSrc = new StringBuilder(utilities);
             fSrc.Append("kernel void fused_elementwise_kernel(\n");
             BuildSignature(fSrc);
-            fSrc.Append("    int tid = get_global_id(0);\n");
-            BuildPrivateReads(fSrc);
-            fSrc.Append("    // Вычисления\n" + _bodyCode.ToString() + "\n");
-            BuildPrivateWrites(fSrc);
+            //fSrc.Append("    int tid = get_global_id(0);\n\n");
+            fSrc.Append("int tid=get_global_size(1)*get_global_id(0)+get_global_id(1);\n\n");//XY оптимизация
+            fSrc.Append(coordDecoder.ToString());
+            fSrc.Append(indexCalculators.ToString());
+
+            // Чтение в регистры по вычисленным индексам слияния размерностей
+            fSrc.Append("    // Чтение во внутренние регистры\n");
+            foreach (var name in DiscoveredTensors)
+                fSrc.Append($"    float priv_{name} = {name}[idx_{name}];\n");
+
+            fSrc.Append("\n    // Вычисления\n" + _bodyCode.ToString() + "\n");
+
+            // Запись результатов во VRAM
+            fSrc.Append("    // Сохранение результатов\n");
+            foreach (var name in DiscoveredTensors)
+            {
+                fSrc.Append($"    if (tid < {name}_len) {{ {name}[idx_{name}] = priv_{name}; }}\n");
+            }
+            fSrc.Append("}");
 
             // --- СБОРКА СТРОКИ ЯДРА BACKWARD ---
-            // Чистим сигнатуру от конфликтующих модификаторов const
             var bSrc = new StringBuilder(utilities);
             bSrc.Append("kernel void fused_elementwise_backward_kernel(\n");
             foreach (var name in DiscoveredTensors)
             {
                 bSrc.Append($"    global float* {name}, global float* grad_{name}, global float* out_grad_{name}, const int {name}_len,\n");
             }
-            bSrc.Length -= 2; // Убираем запятую и перенос
+            bSrc.Length -= 2;
             bSrc.Append(") {\n");
-            bSrc.Append("    int tid = get_global_id(0);\n\n");
+            //bSrc.Append("    int tid = get_global_id(0);\n\n");
+            bSrc.Append("int tid=get_global_size(1)*get_global_id(0)+get_global_id(1);\n\n");//XY оптимизация
+            bSrc.Append(coordDecoder.ToString());
+            bSrc.Append(indexCalculators.ToString());
 
-            // Инициализация локальных регистров для обратного прохода
             foreach (var name in DiscoveredTensors)
             {
-                bSrc.Append($"    float priv_{name} = {name}[min(tid, {name}_len - 1)];\n");
-                bSrc.Append($"    float priv_grad_{name} = grad_{name}[min(tid, {name}_len - 1)];\n");
+                bSrc.Append($"    float priv_{name} = {name}[idx_{name}];\n");
+                bSrc.Append($"    float priv_grad_{name} = grad_{name}[idx_{name}];\n");
                 bSrc.Append($"    float priv_out_grad_{name} = 0.0f;\n");
             }
             bSrc.Append("\n    // Вычисление производных на регистрах\n");
             bSrc.Append(_backwardBodyCode.ToString());
-            bSrc.Append("\n    // Сохранение рассчитанных градиентов во VRAM\n");
+            bSrc.Append("\n    // Сохранение рассчитанных градиентов\n");
             foreach (var name in DiscoveredTensors)
             {
-                bSrc.Append($"    if (tid < {name}_len) {{ out_grad_{name}[tid] = priv_out_grad_{name}; }}\n");
+                bSrc.Append($"    if (tid < {name}_len) {{ out_grad_{name}[idx_{name}] = priv_out_grad_{name}; }}\n");
             }
             bSrc.Append("}");
 
@@ -100,27 +184,23 @@ inline float nn_dropout_backward(float grad_out, float p, int tid, unsigned int 
             }
             sb.Append(") {\n");
         }
+       
 
-        private void BuildPrivateReads(StringBuilder sb)
-        {
-            foreach (var name in DiscoveredTensors)
-                sb.Append($"    float priv_{name} = {name}[min(tid, {name}_len - 1)];\n");
-            sb.Append("\n");
-        }
+        /// <summary>
+        /// Список имен тензоров, в которые производилась запись (левая часть оператора '=').
+        /// </summary>
+        public HashSet<string> OutputTensorNames { get; } = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
-        private void BuildPrivateWrites(StringBuilder sb)
-        {
-            foreach (var name in DiscoveredTensors)
-                sb.Append($"    if (tid < {name}_len) {{ {name}[tid] = priv_{name}; }}\n");
-            sb.Append("}");
-        }
-
+   
         public override SyntaxNode VisitAssignmentExpression(AssignmentExpressionSyntax node)
         {
             string leftVar = node.Left.ToString().Trim();
             DiscoveredTensors.Add(leftVar);
-            string opStr = node.OperatorToken.Text;
 
+            // ФИКСАЦИЯ ВЫХОДА: Маркируем тензор как выходной, так как в него идет запись
+            OutputTensorNames.Add(leftVar);
+
+            string opStr = node.OperatorToken.Text;
             _bodyCode.Append($"    priv_{leftVar} {opStr} ");
             ProcessRightSide(node.Right, leftVar);
             _bodyCode.Append(";\n");
@@ -132,6 +212,7 @@ inline float nn_dropout_backward(float grad_out, float p, int tid, unsigned int 
         {
             if (expression is InvocationExpressionSyntax invocation)
             {
+                // 1. ПЕРЕХВАТ ФУНКЦИЙ (tanh, sin, cos, dropout)
                 string funcText = invocation.Expression.ToString();
                 var firstArgExpr = invocation.ArgumentList.Arguments[0].Expression;
                 string argName = firstArgExpr.ToString().Trim();
@@ -164,9 +245,13 @@ inline float nn_dropout_backward(float grad_out, float p, int tid, unsigned int 
             }
             else if (expression is BinaryExpressionSyntax binary)
             {
+                // 2. ПЕРЕХВАТ БИНАРНОЙ МАТЕМАТИКИ (+, -, *, /)
+                // Исправление 1: Рекурсивно раскрываем операнды, знаки подчеркивания добавятся внутри IdentifierNameSyntax автоматически!
                 ProcessRightSide(binary.Left, leftVar);
+
                 string op = binary.OperatorToken.Text;
                 _bodyCode.Append($" {op} ");
+
                 ProcessRightSide(binary.Right, leftVar);
 
                 string leftStr = binary.Left.ToString().Trim();
@@ -179,33 +264,39 @@ inline float nn_dropout_backward(float grad_out, float p, int tid, unsigned int 
                 }
                 else if (op == "+" && !_externalConstants.ContainsKey(leftStr) && !_externalConstants.ContainsKey(rightStr))
                 {
-                    if (DiscoveredTensors.Contains(leftStr)) _backwardBodyCode.Append($"    priv_out_grad_{leftStr} += priv_grad_{leftVar};\n");
-                    if (DiscoveredTensors.Contains(rightStr)) _backwardBodyCode.Append($"    priv_out_grad_{rightStr} += priv_grad_{leftVar};\n");
+                    // Исправление 2: Добавлены потерянные знаки подчеркивания '_' для обратного прохода сложения тензоров
+                    if (DiscoveredTensors.Contains(leftStr))
+                        _backwardBodyCode.Append($"    priv_out_grad_{leftStr} += priv_grad_{leftVar};\n");
+
+                    if (DiscoveredTensors.Contains(rightStr))
+                        _backwardBodyCode.Append($"    priv_out_grad_{rightStr} += priv_grad_{leftVar};\n");
                 }
             }
             else if (expression is IdentifierNameSyntax identifier)
             {
+                // 3. ПЕРЕХВАТ ИДЕНТИФИКАТОРОВ (Переменные-тензоры)
                 string name = identifier.Identifier.Text.Trim();
 
                 if (_externalConstants.TryGetValue(name, out float val))
                 {
-                    // Исправление: жестко форматируем константу как float с точкой (например 2.0f вместо 2f)
                     _bodyCode.Append(val.ToString("F1", System.Globalization.CultureInfo.InvariantCulture) + "f");
                 }
                 else
                 {
                     DiscoveredTensors.Add(name);
+                    // Исправление 3: Строго добавляем префикс со знаком подчеркивания для прямого прохода
                     _bodyCode.Append($"priv_{name}");
                 }
             }
             else
             {
+                // 4. ПРЯМЫЕ ЧИСЛОВЫЕ КОНСТАНТЫ ИЗ ТЕКСТА
                 string numStr = expression.ToString().Trim().Replace(",", ".");
-                if (!numStr.Contains(".")) numStr += ".0"; // Гарантируем точку для Си компилятора GPU
+                if (!numStr.Contains(".")) numStr += ".0";
                 if (!numStr.EndsWith("f") && !numStr.EndsWith("u")) numStr += "f";
                 _bodyCode.Append(numStr);
             }
         }
+
     }
 }
-

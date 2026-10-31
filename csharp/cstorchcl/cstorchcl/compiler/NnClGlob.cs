@@ -367,18 +367,23 @@ namespace cstorchcl.compiler
         /// Пакетное матричное умножение (Batch Matrix Multiplication).
         /// Ожидает строго 3D-тензоры: A [Batch, M, K], B [Batch, K, N] -> Выход [Batch, M, N].
         /// </summary>
+        /// <summary>
+        /// Пакетное матричное умножение с поддержкой Batch Broadcasting для весов модели.
+        /// </summary>
         public Tensor Bmm(Tensor a, Tensor b)
         {
             if (a.Shape.Length != 3 || b.Shape.Length != 3)
                 throw new ArgumentException("BMM ожидает строго 3D-тензоры формы [Batch, M, K].");
 
-            if (a.Shape[0] != b.Shape[0])
-                throw new ArgumentException("Размерность Batch у тензоров А и В должна совпадать.");
+            // ПРАВИЛО BROADCASTING ДЛЯ БАТЧА:
+            // Если батч у B равен 1, а у А больше 1, то разрешаем операцию (веса применятся ко всем примерам)
+            if (a.Shape[0] != b.Shape[0] && b.Shape[0] != 1)
+                throw new ArgumentException($"Несовпадение батч-размерностей: {a.Shape[0]} и {b.Shape[0]}.");
 
             if (a.Shape[2] != b.Shape[1])
                 throw new ArgumentException($"Несовпадение внутренних осей матриц: K-ось {a.Shape[2]} != {b.Shape[1]}.");
 
-            int batch = a.Shape[0];
+            int batch = a.Shape[0]; // Итоговый батч всегда равен батчу данных (3)
             int m = a.Shape[1];
             int k = a.Shape[2];
             int n = b.Shape[2];
@@ -386,24 +391,26 @@ namespace cstorchcl.compiler
             int[] outShape = { batch, m, n };
             Tensor c = new Tensor(outShape, _computeCtx.Context, MemoryFlags.ReadWrite, requiresGrad: a.RequiresGrad || b.RequiresGrad);
 
-            // Вычисляем шаги смещения внутри плоского буфера для каждой матрицы пакета (batch strides)
             int batchStrideA = m * k;
-            int batchStrideB = k * n;
+
+            // ВАЖНОЕ АРХИТЕКТУРНОЕ ИСПРАВЛЕНИЕ:
+            // Если у тензора B (веса) батч равен 1, то шаг смещения пакета во VRAM принудительно зануляется!
+            // Ядро на GPU будет читать одну и ту же матрицу для каждого шага батча
+            int batchStrideB = (b.Shape[0] == 1) ? 0 : (k * n);
+
             int batchStrideC = m * n;
 
             // Настройка 3D-сетки потоков под тайлы 16х16
-            // Использование Math.Ceiling аналогично np.ceil(M / 16.0) * 16
             int gx = (int)Math.Ceiling(n / 16.0) * 16;
             int gy = (int)Math.Ceiling(m / 16.0) * 16;
             int gz = batch;
 
             IntPtr localSizeX = new IntPtr(16);
             IntPtr localSizeY = new IntPtr(16);
-            IntPtr localSizeZ = new IntPtr(1); // Пакеты обрабатываются параллельно независимыми группами
+            IntPtr localSizeZ = new IntPtr(1);
 
             CommandQueue activeQueue = DeviceQueueRegistry.GetCurrent();
             int t = 0;
-            // Передаем аргументы ядра bmm_tiled:
             _kernelBmmTiled.Arguments[t++].SetValue(a.DataBuffer);
             _kernelBmmTiled.Arguments[t++].SetValue(b.DataBuffer);
             _kernelBmmTiled.Arguments[t++].SetValue(c.DataBuffer);
@@ -411,7 +418,7 @@ namespace cstorchcl.compiler
             _kernelBmmTiled.Arguments[t++].SetValue(k);
             _kernelBmmTiled.Arguments[t++].SetValue(n);
             _kernelBmmTiled.Arguments[t++].SetValue(batchStrideA);
-            _kernelBmmTiled.Arguments[t++].SetValue(batchStrideB);
+            _kernelBmmTiled.Arguments[t++].SetValue(batchStrideB); // Передаем скорректированный шаг!
             _kernelBmmTiled.Arguments[t++].SetValue(batchStrideC);
 
             activeQueue.EnqueueNDRangeKernel(
@@ -429,6 +436,7 @@ namespace cstorchcl.compiler
 
             return c;
         }
+
 
         #endregion
         #region CasualConv1d
@@ -804,6 +812,11 @@ namespace cstorchcl.compiler
         }
 
         #endregion
+        public Dictionary<string, Tensor> RunLocal(string pseudoCode, Dictionary<string, Tensor> tensors, Dictionary<string, float> constants = null)
+        {
+            return NnClLoc.Run(pseudoCode, tensors, _computeCtx, constants);
+        }
+
     }
 }
 

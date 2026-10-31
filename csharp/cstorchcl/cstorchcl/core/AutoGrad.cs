@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
+using cstorchcl.compiler;
 using NOpenCL;
 
 namespace cstorchcl.core
@@ -92,12 +93,18 @@ namespace cstorchcl.core
                         if (!input.RequiresGrad) continue;
 
                         // Инициализируем буфер градиента для входа, если он еще пустой
+                        
                         input.InitGradient(context);
 
                         // Аккумулируем градиент (input.Grad += inputGrads[i])
                         // ВАЖНО: В нейросетях градиенты одного и того же тензора, используемого в разных местах, складываются.
                         // Для этого потребуется написать поэлементное суммирующее OpenCL-ядро (Add-kernel)
                         AccumulateGradient(input.Grad, inputGrads[i]);
+#if DEBUG
+HostReturner.PrintTensor(input, "sum_grad", true);
+                        Console.WriteLine();
+#endif
+                        
                     }
                 }
             }

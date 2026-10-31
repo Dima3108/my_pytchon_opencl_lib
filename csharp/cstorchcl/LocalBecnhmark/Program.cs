@@ -71,7 +71,7 @@ class Program
             {
                 // Запуск конвейера. Roslyn мгновенно соберет код ядра, 
                 // а JITProgramCache выдаст уже скомпилированный бинарник со 2-й итерации!
-                NnClLoc.Run(codeBlock, tensorArgs, constants);
+                NnClLoc.Run(codeBlock, tensorArgs,computeContext, constants);
             }
             queue.Finish();
             swFused.Stop();

@@ -80,7 +80,7 @@ namespace cstorchcl.core
             Shape = (int[])shape.Clone();
             Size = CalculateSize(shape);
             RequiresGrad = requiresGrad;
-
+            Strides = CalculateStrides(shape);
             // Вычисляем размер буфера в байтах. Сейчас жестко завязано на float (4 байта)
             long sizeInBytes = (long)Size * sizeof(float);
 
@@ -118,7 +118,7 @@ namespace cstorchcl.core
             Shape = (int[])shape.Clone();
             Size = CalculateSize(shape);
             RequiresGrad = requiresGrad;
-
+            Strides = CalculateStrides(shape);
             // Важнейшая валидация: проверяем, совпадает ли физический размер массива с логической формой
             if (data.Length != Size)
             {
@@ -248,5 +248,31 @@ namespace cstorchcl.core
         {
             Dispose(false);
         }
+        /// <summary>
+        /// Шаги (strides) тензора для каждой оси. Показывают смещение в плоском массиве.
+        /// Например, для Shape [2, 3, 4] Strides будут.
+        /// </summary>
+        public int[] Strides { get; init; }
+
+        // Добавьте вызов этого метода в конструкторы класса Tensor сразу после Size = CalculateSize(shape);
+        // Strides = CalculateStrides(Shape);
+
+        /// <summary>
+        /// Вычисляет классические непрерывные (contiguous) шаги осей на основе формы тензора.
+        /// </summary>
+        private static int[] CalculateStrides(int[] shape)
+        {
+            int[] strides = new int[shape.Length];
+            int currentStride = 1;
+
+            // Идем с конца формы к началу
+            for (int i = shape.Length - 1; i >= 0; i--)
+            {
+                strides[i] = currentStride;
+                currentStride *= shape[i];
+            }
+            return strides;
+        }
+
     }
 }

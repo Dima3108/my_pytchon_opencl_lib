@@ -8,6 +8,10 @@ namespace cstorchcl.compiler
         public Tensor Tensor { get; }
         public string Name { get; }
 
+        // Передаем метаданные формы для анализа Broadcasting
+        public int[] Shape => Tensor.Shape;
+        public int[] Strides => Tensor.Strides;
+
         public LocalVariable(Tensor tensor, string name)
         {
             Tensor = tensor ?? throw new ArgumentNullException(nameof(tensor));

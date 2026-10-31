@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Linq;
 using NOpenCL;
+using NOpenCL.Extensions;
 
 namespace cstorchcl.core
 {
@@ -12,7 +13,16 @@ namespace cstorchcl.core
         public Platform Platform { get; private set; }
         public Device Device { get; private set; }
         public Context Context { get; private set; }
-
+        /// <summary>
+        /// Размер варпа
+        /// </summary>
+        public int warp_size { get; private set; }
+        /// <summary>
+        /// Максимальный размер рабочей группы (X*Y*Z)
+        /// </summary>
+        public int MAX_WORK_GROUP_SIZE { get; private set; }
+        public int MAX_WORK_GPOUP_SIZE_X { get; private set; }
+        public int MAX_WORK_GPOUP_SIZE_Y { get; private set; }
         private bool _isDisposed = false;
 
         /// <summary>
@@ -95,6 +105,49 @@ namespace cstorchcl.core
                 throw new InvalidOperationException(
                     $"Не удалось создать контекст OpenCL для устройства '{Device.Name}' ({Device.Vendor}).", ex);
             }
+            #region DeviceParametrs
+ warp_size = (int)Device.GetWarpSizeNv();
+            MAX_WORK_GROUP_SIZE = (int)Device.MaxWorkGroupSize;
+            if (MAX_WORK_GROUP_SIZE < warp_size)
+            {
+                if (MAX_WORK_GROUP_SIZE < 4)
+                {
+                    MAX_WORK_GPOUP_SIZE_X = 1;
+                    MAX_WORK_GPOUP_SIZE_Y = 1;
+                }
+                else
+                {
+                    if (MAX_WORK_GROUP_SIZE < 16)
+                    {
+                        MAX_WORK_GPOUP_SIZE_X = 2;
+                        MAX_WORK_GPOUP_SIZE_Y = 2;
+                    }
+                    else
+                    {
+                        if (MAX_WORK_GROUP_SIZE < 32)
+                        {
+                            MAX_WORK_GPOUP_SIZE_X = 4;
+                            MAX_WORK_GPOUP_SIZE_Y = 4;
+                        }
+                        else
+                        {
+                            MAX_WORK_GPOUP_SIZE_X = 8;
+                            MAX_WORK_GPOUP_SIZE_Y = 4;
+                        }
+                    }
+                }
+            }
+            else
+            {
+                MAX_WORK_GPOUP_SIZE_Y = warp_size / 8;
+                MAX_WORK_GPOUP_SIZE_X = MAX_WORK_GROUP_SIZE / MAX_WORK_GPOUP_SIZE_Y;
+            }
+#if DEBUG
+            Console.WriteLine($"максимальные размеры локальной группы для устройства на основе варпа:X={MAX_WORK_GPOUP_SIZE_X},Y={MAX_WORK_GPOUP_SIZE_Y}");
+#endif
+#endregion
+
+
         }
 
         public void Dispose()

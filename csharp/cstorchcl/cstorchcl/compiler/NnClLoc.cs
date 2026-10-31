@@ -9,74 +9,89 @@ namespace cstorchcl.compiler
     public static class NnClLoc
     {
         /// <summary>
-        /// Выполняет динамическую сборку и запуск сплавленного OpenCL-ядра (Forward + Backward).
+        /// Выполняет динамическую сборку и запуск сплавленного OpenCL-ядра на 2D-сетке варпов.
         /// </summary>
-        public static void Run(string pseudoCode, Dictionary<string, Tensor> tensors, Dictionary<string, float> constants = null)
+        ///         /// <summary>
+        /// Выполняет динамическую сборку и возвращает СЛОВАРЬ новых выходных тензоров.
+        /// </summary>
+        public static Dictionary<string, Tensor> Run(string pseudoCode, Dictionary<string, Tensor> tensors, ComputeContext computeCtx, Dictionary<string, float> constants = null)
         {
-            if (string.IsNullOrWhiteSpace(pseudoCode)) return;
-            if (tensors == null || tensors.Count == 0) return;
+            if (string.IsNullOrWhiteSpace(pseudoCode)) return null;
+            if (tensors == null || tensors.Count == 0) return null;
 
-            // 1. Запуск транслятора Roslyn (Генерируем сразу Forward и Backward исходники)
             var transpiler = new LocalRoslynTranspiler();
-            var (forwardSource, backwardSource) = transpiler.TranslateWithGrad(pseudoCode, constants);
+            var (forwardSource, backwardSource) = transpiler.TranslateWithGrad(pseudoCode, constants, tensors);
 
-            // 2. Вычисляем максимальный размер сетки потоков GPU
-            int maxTensorSize = 0;
-            foreach (var tensorName in transpiler.DiscoveredTensors)
-            {
-                if (tensors.TryGetValue(tensorName, out var t))
-                {
-                    if (t.Size > maxTensorSize) maxTensorSize = t.Size;
-                }
-                else
-                {
-                    throw new InvalidOperationException($"Критическая ошибка JIT: Тензор '{tensorName}' не передан в аргументы.");
-                }
-            }
-
+            int N = tensors.Values.Max(t => t.Size);
             CommandQueue queue = DeviceQueueRegistry.GetCurrent();
             Context context = queue.Context;
-            Device device = queue.Device;
 
-            // 3. Компиляция и запуск прямого прохода (Forward)
-            Program program = JITProgramCache.GetOrCompile(context, device, forwardSource);
+            // =========================================================================
+            // ИСПРАВЛЕНИЕ: Выделяем новые изолированные буферы для результатов вычислений
+            // =========================================================================
+            var outputDict = new Dictionary<string, Tensor>(StringComparer.OrdinalIgnoreCase);
+
+            foreach (var outName in transpiler.OutputTensorNames)
+            {
+                Tensor originalIn = tensors[outName];
+
+                // Создаем НОВЫЙ тензор. Он будет чистым результатом JIT-блока!
+                Tensor newOut = new Tensor(originalIn.Shape, context, MemoryFlags.ReadWrite,
+                    requiresGrad: tensors.Values.Any(t => t.RequiresGrad));
+
+                outputDict.Add(outName, newOut);
+            }
+
+            // Создаем рабочий словарь для запуска ядра на GPU.
+            // Заменяем выходные буферы на новые чистые структуры, чтобы не затирать входы!
+            var executionTensors = new Dictionary<string, Tensor>(tensors, StringComparer.OrdinalIgnoreCase);
+            foreach (var kvp in outputDict)
+            {
+                executionTensors[kvp.Key] = kvp.Value;
+            }
+            // =========================================================================
+
+            int warp = computeCtx.warp_size;
+            int globalX = ((1 + (N / warp)) + computeCtx.MAX_WORK_GPOUP_SIZE_X - 1) / computeCtx.MAX_WORK_GPOUP_SIZE_X * computeCtx.MAX_WORK_GPOUP_SIZE_X;
+            int globalY = ((warp) + computeCtx.MAX_WORK_GPOUP_SIZE_Y - 1) / computeCtx.MAX_WORK_GPOUP_SIZE_Y * computeCtx.MAX_WORK_GPOUP_SIZE_Y;
+
+            Program program = JITProgramCache.GetOrCompile(context, queue.Device, forwardSource);
             using Kernel kernel = program.CreateKernel("fused_elementwise_kernel");
 
             int argIndex = 0;
             foreach (var tensorName in transpiler.DiscoveredTensors)
             {
-                Tensor t = tensors[tensorName];
+                Tensor t = executionTensors[tensorName]; // Читает из старых, пишет в новые!
                 kernel.Arguments[argIndex++].SetValue(t.DataBuffer);
                 kernel.Arguments[argIndex++].SetValue(t.Size);
             }
 
-            IntPtr globalSize = new IntPtr(maxTensorSize);
-            queue.EnqueueNDRangeKernel(kernel, new[] { globalSize }, null);
+            queue.EnqueueNDRangeKernel(kernel, null, new[] { new IntPtr(globalX), new IntPtr(globalY) }, new[] { new IntPtr(computeCtx.MAX_WORK_GPOUP_SIZE_X), new IntPtr(computeCtx.MAX_WORK_GPOUP_SIZE_Y) });
             queue.Finish();
 
-            // 4. ИНТЕГРАЦИЯ С AUTOGRAD: Если хотя бы один тензор обучаемый — встраиваем LocalOp в граф
+            // Интеграция с Autograd
             bool anyRequiresGrad = tensors.Values.Any(t => t.RequiresGrad);
+            // ИСПРАВЛЕНИЕ ИНТЕГРАЦИИ: Убираем дублирование слоев в Autograd
+         
             if (anyRequiresGrad)
             {
                 Tensor[] inputs = tensors.Values.ToArray();
+                Tensor representative = outputDict.Values.First();
 
-                // Создаем один общий узел операции для всей группы сплавленных вычислений.
-                // В качестве репрезентативного выхода передаем тензор, который является целью (например, первый измененный)
-                Tensor representativeOutput = tensors.Values.First();
-                var localOp = new LocalOp(inputs, representativeOutput, backwardSource, tensors);
+                var localOp = new LocalOp(inputs, representative, backwardSource, executionTensors, computeCtx);
 
-                // ВАЖНОЕ ИСПРАВЛЕНИЕ: Мы должны назначить этот Creator ВСЕМ тензорам, 
-                // которые участвовали в данном JIT-конвейере и требуют расчета градиентов,
-                // чтобы AutoGrad гарантированно споткнулся об эту операцию при движении назад от Loss!
-                foreach (var kvp in tensors)
+                // Назначаем Creator СТРОГО только выходным тензорам JIT-блока!
+                // Входной projected сохранит свой BmmOp, а Bias останется листом графа (Creator = null)
+                foreach (var outTensor in outputDict.Values)
                 {
-                    if (kvp.Value.RequiresGrad)
-                    {
-                        kvp.Value.Creator = localOp;
-                    }
+                    outTensor.Creator = localOp;
                 }
             }
 
+
+            return outputDict; // Возвращаем коллекцию новых результатов
         }
+
+
     }
 }

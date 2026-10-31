@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Collections.Generic;
 using NOpenCL;
 using cstorchcl.compiler;
 using cstorchcl.core;
@@ -9,75 +10,76 @@ public class TestLLMBlock : NeuralNetwork
     public Tensor RmsGamma { get; private set; }
     public Tensor ProjectionWeights { get; private set; }
 
-    // Хранилище обычных CPU-данных, извлеченных из GPU
+    // Поля для отладки прямого прохода на CPU (хосте) через HostReturner
+    public float[] NormalizedHost { get; private set; }
     public float[] ProjectedHost { get; private set; }
+    public float[] ActivatedHost { get; private set; }
 
     public TestLLMBlock(ComputeContext computeContext, NnClGlob nnClGlob, int dModel)
         : base(computeContext, nnClGlob)
     {
-        // 1. Аллокация памяти во VRAM девайса
+        // 1. Выделяем память во VRAM
         RmsGamma = RegisterParameter(new[] { dModel });
-        ProjectionWeights = RegisterParameter(new[] { 1, dModel, dModel }); // Форма для BMM: [Batch, K, N]
+        ProjectionWeights = RegisterParameter(new[] { 1, dModel, dModel }); // [Batch, K, N]
 
-        // Получаем текущую активную очередь команд для инициализации
+        // 2. Чистая инициализация весов (без мусора VRAM)
         CommandQueue queue = DeviceQueueRegistry.GetCurrent();
 
-        // =========================================================================
-        // ИСПРАВЛЕНИЕ: Физическое заполнение параметров дефолтными весами во VRAM
-        // =========================================================================
-
-        // А. Инициализация весов RMSNorm (заполняем единицами, как в PyTorch по умолчанию)
         float[] hostGammaData = new float[RmsGamma.Size];
-        Array.Fill(hostGammaData, 1.0f);
-
-        long gammaSizeInBytes = (long)RmsGamma.Size * sizeof(float);
+        Array.Fill(hostGammaData, 1.0f); // One-init для нормализации
         unsafe
         {
             fixed (float* hgd = hostGammaData)
             {
-  queue.EnqueueWriteBuffer(RmsGamma.DataBuffer, true, 0, gammaSizeInBytes, (IntPtr)hgd);
+  queue.EnqueueWriteBuffer(RmsGamma.DataBuffer, true, 0, (long)RmsGamma.Size * sizeof(float), (IntPtr)hgd);
             }
         }
       
 
-        // Б. Инициализация весов ProjectionWeights (заполняем небольшими случайными/дефолтными весами)
-        // Чтобы при BMM значения не улетали в бесконечность, заполним их, например, 0.05f
         float[] hostWeightsData = new float[ProjectionWeights.Size];
-        Array.Fill(hostWeightsData, 0.05f);
-
-        long weightsSizeInBytes = (long)ProjectionWeights.Size * sizeof(float);
+        Array.Fill(hostWeightsData, 0.05f); // Инициализируем небольшими дефолтными значениями
         unsafe
         {
-            fixed (float* hwhd = hostWeightsData)
+            fixed (float* hwd = hostWeightsData)
             {
-queue.EnqueueWriteBuffer(ProjectionWeights.DataBuffer, true, 0, weightsSizeInBytes, (IntPtr)hwhd);
+queue.EnqueueWriteBuffer(ProjectionWeights.DataBuffer, true, 0, (long)ProjectionWeights.Size * sizeof(float), (IntPtr)hwd);
             }
         }
         
 
-        // Гарантируем, что видеокарта завершила запись весов перед тем, как модель пойдет в работу
         queue.Finish();
-        // =========================================================================
     }
 
+    /// <summary>
+    /// Полный сквозной Forward Pass модели: RMSNorm -> BMM -> LocalJIT (Tanh/Div/Dropout) -> Softmax
+    /// </summary>
     public Tensor Forward(Tensor x)
     {
+        // 1. Глобальный слой нормализации
         Tensor normalized = NnClGlob.RmsNorm(x, RmsGamma);
+        NormalizedHost = HostReturner.ToCpu(normalized); // Отладочный перехват
+
+        // 2. Линейная проекция через пакетное умножение матриц
         Tensor projected = NnClGlob.Bmm(normalized, ProjectionWeights);
+        ProjectedHost = HostReturner.ToCpu(projected); // Отладочный перехват
 
-        ProjectedHost = HostReturner.ToCpu(projected);
+        // 3. Локальный JIT-блок активаций и регуляризации на регистрах GPU (Сцепка)
+        var tensorArgs = new Dictionary<string, Tensor> { { "P", projected } };
+        var constants = new Dictionary<string, float> { { "q", 2.0f } };
+        string pseudoCode = @"
+            P = nnclloc.tanh(P);
+            P = P / q;
+            P = nnclloc.dropout(P, 0.1, 1337);
+        ";
 
-#if DEBUG
-        // Добавляем нелинейность ELU прямо в базовый проход
-        Tensor activated = NnClGlob.Elu(projected, alpha: 1.0f);
-#else
-        Tensor activated = projected;
-#endif
+        // Вызываем RunLocal, встроенный в подсистему модели (NnClLoc.Run)
+        Dictionary<string, Tensor> localOutputs = NnClGlob.RunLocal(pseudoCode, tensorArgs, constants);
+        Tensor activated = localOutputs["P"];
+        ActivatedHost = HostReturner.ToCpu(activated); // Отладочный перехват
 
-        Tensor probabilities = NnClGlob.Softmax(activated, dim: -1);
+        // 4. Финальный глобальный Softmax
+        Tensor probabilities = NnClGlob.Softmax(activated, dim: -1); //
+
         return probabilities;
     }
-
 }
-
-

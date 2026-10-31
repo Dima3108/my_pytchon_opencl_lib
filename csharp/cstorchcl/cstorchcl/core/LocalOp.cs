@@ -12,72 +12,134 @@ namespace cstorchcl.core
         private readonly string _backwardKernelSource;
         private readonly Dictionary<string, Tensor> _tensorArgs;
 
-        public LocalOp(Tensor[] inputs, Tensor output, string backwardSource, Dictionary<string, Tensor> tensorArgs)
+        // Добавьте поле в класс LocalOp:
+        private readonly ComputeContext _computeCtx;
+
+        // Обновите конструктор класса LocalOp, чтобы он принимал ComputeContext:
+        public LocalOp(Tensor[] inputs, Tensor output, string backwardSource, Dictionary<string, Tensor> tensorArgs, ComputeContext computeCtx)
         {
             Inputs = inputs;
             Output = output;
             _backwardKernelSource = backwardSource;
             _tensorArgs = tensorArgs;
+            _computeCtx = computeCtx;
         }
 
         public override Tensor[] Backward(Tensor gradOutput, Context context)
         {
             CommandQueue queue = DeviceQueueRegistry.GetCurrent();
-
-            // Компилируем или извлекаем из кэша наше кастомное обратное JIT-ядро
+#if DEBUG
+            Console.WriteLine("[locRunner]запуск обратного прохода!");
+#endif
             var prg = compiler.JITProgramCache.GetOrCompile(context, queue.Device, _backwardKernelSource);
             using Kernel kernel = prg.CreateKernel("fused_elementwise_backward_kernel");
 
-            // Создаем выходные тензоры градиентов для каждого задействованного входа
             var outputGrads = new Dictionary<string, Tensor>();
-            // Внутри метода LocalOp.Backward:
             int argIndex = 0;
+
             foreach (var kvp in _tensorArgs)
             {
                 string name = kvp.Key;
                 Tensor t = kvp.Value;
 
-                // 1. Инициализируем градиентный буфер параметра, если он пустой
                 t.InitGradient(context);
 
-                // 2. Создаем временный выходной буфер текущего слоя для аккумуляции
+                // Выделяем временный буфер для дельты текущего слоя
                 Tensor outLayerGrad = new Tensor(t.Shape, context, MemoryFlags.ReadWrite, requiresGrad: false);
                 outputGrads.Add(name, outLayerGrad);
 
-                // ПРИВЯЗКА СТРОГО ПО НАШЕЙ ИСПРАВЛЕННОЙ СИГНАТУРЕ:
-                // global float* {name}, global float* grad_{name}, global float* out_grad_{name}, const int {name}_len
+                // =========================================================================
+                // ИСПРАВЛЕНИЕ СЦЕПКИ ГРАДИЕНТОВ:
+                // Если этот тензор в executionTensors является выходом (например, "P"), 
+                // то его входящим градиентом для JIT-математики должен быть gradOutput,
+                // который прислал верхний слой (Softmax), а не его собственный внутренний t.Grad!
+                // =========================================================================
+                NOpenCL.Buffer incomingGradBuffer = t.Grad.DataBuffer;
+
+                // Проверяем, совпадает ли буфер с буфером репрезентативного выхода операции
+                if (t.DataBuffer == Output.DataBuffer)
+                {
+                    incomingGradBuffer = gradOutput.DataBuffer; // Подменяем градиент на пришедший сверху!
+                }
+                // =========================================================================
+
+                // Передаем аргументы в Си-ядро OpenCL
                 kernel.Arguments[argIndex++].SetValue(t.DataBuffer);
-                kernel.Arguments[argIndex++].SetValue(t.Grad.DataBuffer);
+                kernel.Arguments[argIndex++].SetValue(incomingGradBuffer); // Используем правильный входящий поток градиента!
                 kernel.Arguments[argIndex++].SetValue(outLayerGrad.DataBuffer);
                 kernel.Arguments[argIndex++].SetValue(t.Size);
             }
 
+            // Нахождение максимального размера сетки потоков
+            int maxTensorSize = _tensorArgs.Values.Max(t => t.Size);
 
-            // Находим максимальный размер сетки потоков
-            int maxTensorSize = 0;
-            foreach (var t in _tensorArgs.Values)
-                if (t.Size > maxTensorSize) maxTensorSize = t.Size;
+            int warp = _computeCtx.warp_size;
+            // =========================================================================
+            // ИСПРАВЛЕНИЕ: Точное выравнивание 2D варп-сетки для обратного прохода
+            // =========================================================================
+            //int maxTensorSize = _tensorArgs.Values.Max(t => t.Size);
 
-            IntPtr globalSize = new IntPtr(maxTensorSize);
-            queue.EnqueueNDRangeKernel(kernel,  new[] { globalSize }, null);
+            
+            int localX = _computeCtx.MAX_WORK_GPOUP_SIZE_X; // 256
+            int localY = _computeCtx.MAX_WORK_GPOUP_SIZE_Y; // 4
+
+            // Вычисляем глобальные размеры строго по вашей формуле
+            int rawGlobalY = warp;
+            int rawGlobalX = 1 + (maxTensorSize / rawGlobalY);
+
+            // Округляем вверх до кратности локальным группам
+            int globalX = ((rawGlobalX + localX - 1) / localX) * localX;
+            int globalY = ((rawGlobalY + localY - 1) / localY) * localY;
+
+            IntPtr[] globalWorkSize = new[] { new IntPtr(globalX), new IntPtr(globalY) };
+            IntPtr[] localWorkSize = new[] { new IntPtr(localX), new IntPtr(localY) }; // Передаем X и Y без путаницы!
+            // =========================================================================
+
+            queue.EnqueueNDRangeKernel(kernel, null, globalWorkSize, localWorkSize);
             queue.Finish();
 
-            // Формируем результирующий массив градиентов, сопоставляя их с базовым порядком в Inputs
+            queue.Finish();
+
+            // Формируем результирующий массив градиентов для возврата в AutoGrad
+            // ... (после выполнения ядра queue.Finish(); на странице 3)
+
+            // Формируем чистый результирующий массив изолированных градиентов для возврата в AutoGrad
             Tensor[] finalResultGrads = new Tensor[Inputs.Length];
+
             for (int i = 0; i < Inputs.Length; i++)
             {
-                // Находим имя тензора в словаре аргументов
+                Tensor inputTensor = Inputs[i];
+                Tensor calculatedGradForLayer = null;
+
+                // Находим, под каким строковым именем этот входной тензор шел в JIT-блоке
                 foreach (var kvp in _tensorArgs)
                 {
-                    if (kvp.Value == Inputs[i])
+                    if (kvp.Value == inputTensor)
                     {
-                        finalResultGrads[i] = outputGrads[kvp.Key];
+                        // Извлекаем буфер градиента, который посчитало наше Си-ядро
+                        calculatedGradForLayer = outputGrads[kvp.Key];
                         break;
                     }
                 }
+
+                if (calculatedGradForLayer != null)
+                {
+                    // Важный шаг (как у BmmOp): сбрасываем создателя, чтобы этот тензор градиента 
+                    // считался чистыми данными и не участвовал в обходе графа
+                    calculatedGradForLayer.Creator = null;
+                    finalResultGrads[i] = calculatedGradForLayer;
+                }
+                else
+                {
+                    finalResultGrads[i] = null;
+                }
             }
 
+            // Возвращаем изолированные градиенты. Движок AutoGrad сам сложит их!
             return finalResultGrads;
         }
+
     }
+
 }
+
