@@ -24,7 +24,9 @@ namespace cstorchcl.compiler
                 {
                     return program;
                 }
-
+#if DEBUG
+                    File.WriteAllText("localkernel.cl", sourceCode);
+#endif
                 try
                 {
                     // Создаем и компилируем программу под наше устройство
@@ -32,6 +34,7 @@ namespace cstorchcl.compiler
                     newProgram.Build(new[] { device });
 
                     _cache[sourceCode] = newProgram;
+
                     return newProgram;
                 }
                 catch (Exception ex)

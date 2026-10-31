@@ -1,5 +1,6 @@
 <Solution>
   <Project Path="cstorchcl/cstorchcl.csproj" />
+  <Project Path="LocalBecnhmark/LocalBecnhmark.csproj" Id="3c08da65-9802-4c66-bf82-7e52b7402b82" />
   <Project Path="TestLLMComponents/TestLLMComponents.csproj" />
   <Project Path="TrainTest/TrainTest.csproj" Id="153cc626-5d25-47b5-93f5-d27aa5dcaddc" />
 </Solution>
