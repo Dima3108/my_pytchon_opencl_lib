@@ -14,7 +14,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("cstorchcl")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Debug")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+15e6c4ff89bb405a0dc780c0a3042e9898220cb9")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+c3808c73ea875e627465a821adb1d756df7ebd38")]
 [assembly: System.Reflection.AssemblyProductAttribute("cstorchcl")]
 [assembly: System.Reflection.AssemblyTitleAttribute("cstorchcl")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]

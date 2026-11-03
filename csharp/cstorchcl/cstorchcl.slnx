@@ -1,4 +1,5 @@
 <Solution>
+  <Project Path="AdamTest/AdamTest.csproj" Id="a05d804b-0359-4c7c-a992-24a96c57fd47" />
   <Project Path="cstorchcl/cstorchcl.csproj" />
   <Project Path="LocalBecnhmark/LocalBecnhmark.csproj" Id="3c08da65-9802-4c66-bf82-7e52b7402b82" />
   <Project Path="TestLLMComponents/TestLLMComponents.csproj" />

@@ -18,6 +18,9 @@
   </ItemGroup>
 
   <ItemGroup>
+    <None Update="cl_kernels\adam_step.cl">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </None>
     <None Update="cl_kernels\base_cl_functions.cl">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </None>
