@@ -100,7 +100,8 @@ namespace cstorchcl.core
                         // ВАЖНО: В нейросетях градиенты одного и того же тензора, используемого в разных местах, складываются.
                         // Для этого потребуется написать поэлементное суммирующее OpenCL-ядро (Add-kernel)
                         AccumulateGradient(input.Grad, inputGrads[i]);
-#if DEBUG
+#if false
+
 HostReturner.PrintTensor(input, "sum_grad", true);
                         Console.WriteLine();
 #endif

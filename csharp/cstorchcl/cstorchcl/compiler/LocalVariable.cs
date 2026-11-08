@@ -42,5 +42,9 @@ namespace cstorchcl.compiler
         public static LocalVariable cos(LocalVariable v) => v;
         public static LocalVariable tanh(LocalVariable v) => v;
         public static LocalVariable dropout(LocalVariable v, float p, uint seed) => v;
+        public static LocalVariable relu(LocalVariable v) => v;
+        public static LocalVariable softplus(LocalVariable v) => v;
+        public static LocalVariable leakyrelu(LocalVariable v) => v;
+
     }
 }

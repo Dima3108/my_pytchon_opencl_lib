@@ -8,6 +8,13 @@ using Microsoft.CodeAnalysis.CSharp.Syntax;
 
 namespace cstorchcl.compiler
 {
+    public class ActivationConfig
+    {
+        public string ClForwardFunc { get; set; }
+        // Обрати внимание: для некоторых функций (как ReLU) производная считается по ВХОДУ priv_x, 
+        // а для некоторых (как Sigmoid) — эффективнее по ВЫХОДУ priv_y. Сделаем по умолчанию по ВХОДУ.
+        public string ClBackwardFormula { get; set; }
+    }
     public class LocalRoslynTranspiler : CSharpSyntaxRewriter
     {
         private readonly StringBuilder _bodyCode = new StringBuilder();
@@ -18,7 +25,20 @@ namespace cstorchcl.compiler
 
         // Словарь для быстрого доступа к метаданным тензоров во время обхода AST
         private Dictionary<string, core.Tensor> _tensorMeta;
+        private static readonly Dictionary<string, ActivationConfig> Activations = new(StringComparer.OrdinalIgnoreCase)
+{
 
+    // Теперь везде строго {0} - это имя приватного регистра ВХОДА (priv_x)
+    { "relu",      new() { ClForwardFunc = "nn_relu",      ClBackwardFormula = "nn_relu_backward(priv_{0})" } },
+    { "leakyrelu", new() { ClForwardFunc = "nn_leakyrelu", ClBackwardFormula = "nn_leakyrelu_backward(priv_{0})" } },
+    { "softplus",  new() { ClForwardFunc = "nn_softplus",  ClBackwardFormula = "nn_softplus_backward(priv_{0})" } },
+    { "sigmoid",   new() { ClForwardFunc = "nn_sigmoid",   ClBackwardFormula = "nn_sigmoid_backward(priv_{0})" } },
+    { "tanh",      new() { ClForwardFunc = "tanh",         ClBackwardFormula = "nn_tanh_backward(priv_{0})" } },
+    { "sin",       new() { ClForwardFunc = "sin",          ClBackwardFormula = "cos(priv_{0})" } },
+    { "cos",       new() { ClForwardFunc = "cos",          ClBackwardFormula = "(-sin(priv_{0}))" } }
+};
+
+    
         public (string forwardSource, string backwardSource) TranslateWithGrad(
             string pseudoCode,
             Dictionary<string, float> constants,
@@ -55,6 +75,32 @@ inline float nn_dropout_backward(float grad_out, float p, int tid, unsigned int 
     float r = nn_rand(tid, seed);
     return (r < p) ? 0.0f : grad_out / (1.0f - p);
 }
+
+
+// Добавляем к строке utilities в LocalRoslynTranspiler:
+
+inline float nn_relu(float x) { return (x > 0.0f) ? x : 0.0f; }
+inline float nn_relu_backward(float x) { return (x > 0.0f) ? 1.0f : 0.0f; }
+
+inline float nn_leakyrelu(float x) { return (x > 0.0f) ? x : x * 0.01f; }
+inline float nn_leakyrelu_backward(float x) { return (x > 0.0f) ? 1.0f : 0.01f; }
+
+inline float nn_softplus(float x) { return log1p(exp(x)); }
+inline float nn_softplus_backward(float x) { return 1.0f / (1.0f + exp(-x)); }
+
+inline float nn_sigmoid(float x) { return 1.0f / (1.0f + exp(-x)); }
+inline float nn_sigmoid_backward(float x) { 
+    float s = 1.0f / (1.0f + exp(-x)); 
+    return s * (1.0f - s); 
+}
+
+inline float nn_tanh_backward(float x) { 
+    float t = tanh(x); 
+    return 1.0f - t * t; 
+}
+
+
+
 
 ";
 
@@ -219,7 +265,7 @@ inline float nn_dropout_backward(float grad_out, float p, int tid, unsigned int 
 
                 DiscoveredTensors.Add(argName);
 
-                if (funcText.Contains("tanh"))
+                /*if (funcText.Contains("tanh"))
                 {
                     _bodyCode.Append($"tanh(priv_{argName})");
                     _backwardBodyCode.Append($"    priv_out_grad_{argName} += priv_grad_{leftVar} * (1.0f - priv_{leftVar} * priv_{leftVar});\n");
@@ -233,15 +279,44 @@ inline float nn_dropout_backward(float grad_out, float p, int tid, unsigned int 
                 {
                     _bodyCode.Append($"cos(priv_{argName})");
                     _backwardBodyCode.Append($"    priv_out_grad_{argName} += priv_grad_{leftVar} * (-sin(priv_{argName}));\n");
-                }
-                else if (funcText.Contains("dropout"))
+                }*/
+
+                /*if (funcText.Contains("dropout"))
                 {
                     string pValStr = invocation.ArgumentList.Arguments[1].ToString();
                     string seedValStr = invocation.ArgumentList.Arguments[2].ToString();
 
                     _bodyCode.Append($"nn_dropout(priv_{argName}, {pValStr}f, tid, {seedValStr}u)");
                     _backwardBodyCode.Append($"    priv_out_grad_{argName} += nn_dropout_backward(priv_grad_{leftVar}, {pValStr}f, tid, {seedValStr}u);\n");
+                }*/
+
+             
+
+                // Специфичная логика для Dropout (так как у него 3 аргумента)
+                if (funcText.Contains("dropout"))
+                {
+                    string pValStr = invocation.ArgumentList.Arguments[1].ToString();
+                    string seedValStr = invocation.ArgumentList.Arguments[2].ToString();
+                    _bodyCode.Append($"nn_dropout(priv_{argName}, {pValStr}f, tid, {seedValStr}u)");
+                    _backwardBodyCode.Append($" priv_out_grad_{argName} += nn_dropout_backward(priv_grad_{leftVar}, {pValStr}f, tid, {seedValStr}u);\n");
+                    return;
                 }
+
+                // Универсальный конвейер для всех остальных активаций
+                var matchedKey = Activations.Keys.FirstOrDefault(k => funcText.Contains(k));
+                if (matchedKey != null)
+                {
+                    var cfg = Activations[matchedKey];
+
+                    // Прямой проход: например, nn_sigmoid(priv_x)
+                    _bodyCode.Append($"{cfg.ClForwardFunc}(priv_{argName})");
+
+                    // Обратный проход: {0} заменяется строго на argName. leftVar все еще передается, 
+                    // но маппинг его игнорирует, сохраняя сигнатуру метода string.Format стабильной.
+                    string backwardExpr = string.Format(cfg.ClBackwardFormula, argName, leftVar);
+                    _backwardBodyCode.Append($" priv_out_grad_{argName} += priv_grad_{leftVar} * {backwardExpr};\n");
+                }
+
             }
             else if (expression is BinaryExpressionSyntax binary)
             {

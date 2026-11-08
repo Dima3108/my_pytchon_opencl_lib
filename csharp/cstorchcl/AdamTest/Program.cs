@@ -51,8 +51,8 @@ namespace TrainTest
             // 4. Создаем оптимизатор Adam и передаем параметры на обучение
             List<Tensor> paramsToOptimize = new List<Tensor> { weights };
             // Задаем lr повыше (например, 0.05), чтобы на синтетическом тесте лосс упал за пару десятков эпох
-            Adam optimizer = new Adam(paramsToOptimize, lr: 0.05f, beta1: 0.9f, beta2: 0.999f, epsilon: 1e-8f);
-
+             Adam optimizer = new Adam(paramsToOptimize, lr: 0.05f, beta1: 0.9f, beta2: 0.999f, epsilon: 1e-8f);
+           // var optimizer = new SGD(paramsToOptimize, 0.05f, computeCtx);
             Console.WriteLine("Начальные веса успешно загружены во VRAM.");
             Console.WriteLine("Запуск цикла оптимизации (20 эпох)...");
             Console.WriteLine("--------------------------------------------");
@@ -65,7 +65,7 @@ namespace TrainTest
             {
                 // Обнуляем градиенты на каждом шаге
                 optimizer.ZeroGrad();
-
+               
                 // Forward Pass: Считаем ошибку MSE между текущими весами и целевыми.
                 // Примечание: Для чистоты проверки Adam мы можем считать ошибку напрямую 
                 // между тензором весов и таргетом.

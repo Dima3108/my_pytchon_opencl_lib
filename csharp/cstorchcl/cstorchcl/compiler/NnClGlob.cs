@@ -20,11 +20,13 @@ namespace cstorchcl.compiler
         private Program _prgPermute;
         private Program _prgConv;
         private Program _prgEmbedding;
+        private Program _prgLstm;
 
         // Кэшированные скомпилированные ядра (экземпляры Kernel)
         private Kernel _kernelSoftmaxForward;
         private Kernel _kernelSoftmaxBackward;
-
+        //lstm
+        private Kernel _kernelLstmForward, _kernelLstmBackward, _kernelLstmHidForward, _kernelLstmHidBackward;
         /// <summary>
         /// Инициализирует диспетчер ядер, привязываясь к активному ComputeContext.
         /// </summary>
@@ -87,6 +89,13 @@ namespace cstorchcl.compiler
             _prgEmbedding = JITProgramCache.GetOrCompile(ctx, dev, embeddingCode);
             _kernelEmbeddingForward = _prgEmbedding.CreateKernel("embedding_forward");
             _kernelEmbeddingBackward = _prgEmbedding.CreateKernel("embedding_backward");
+            //7.Загрузка LSTM:
+            string lstmCode = File.ReadAllText(Path.Combine(kernelsDir, "lstm.cl"));
+            _prgLstm = JITProgramCache.GetOrCompile(ctx, dev, lstmCode);
+            _kernelLstmForward = _prgLstm.CreateKernel("lstm_forward");
+            _kernelLstmBackward = _prgLstm.CreateKernel("lstm_backward");
+            _kernelLstmHidForward = _prgLstm.CreateKernel("lstm_hid_forward");
+            _kernelLstmHidBackward = _prgLstm.CreateKernel("lstm_hid_backward");
         }
 
         // =========================================================================
@@ -817,6 +826,223 @@ namespace cstorchcl.compiler
             return NnClLoc.Run(pseudoCode, tensors, _computeCtx, constants);
         }
 
+        #region
+        /// <summary>
+        /// Глобальная высокооптимизированная операция LSTM (Forward).
+        /// Ожидает 3D-тензор входа X [Batch, SeqLen, InFeatures].
+        /// </summary>
+        /// <param name="x">Входной тензор данных.</param>
+        /// <param name="w">Матрица весов входа [InFeatures, 4 * HiddenSize].</param>
+        /// <param name="u">Матрица весов скрытого состояния [HiddenSize, 4 * HiddenSize].</param>
+        /// <param name="bias">Вектор смещений гейтов [4 * HiddenSize].</param>
+        /// <param name="hiddenSize">Размерность скрытого состояния.</param>
+        /// <param name="workspace">Управляющий буфер OpenCL для записи промежуточных состояний гейтов.</param>
+        /// <returns>Выходной тензор скрытых состояний H [Batch, SeqLen, HiddenSize].</returns>
+        public unsafe Tensor Lstm(Tensor x, Tensor w, Tensor u, Tensor bias, int hiddenSize, out NOpenCL.Buffer workspace)
+        {
+            // Извлекаем базовые размерности из формы входного тензора
+            int batchSize = x.Shape[0];
+            int seqLen = x.Shape[1];
+            int inFeatures = x.Shape[2];
+
+            // 1. Аллокация результирующего тензора скрытых состояний H [Batch, SeqLen, HiddenSize]
+            int[] outputShape = new int[] { batchSize, seqLen, hiddenSize };
+            Tensor hOut = new Tensor(outputShape, _computeCtx.Context, MemoryFlags.ReadWrite, requiresGrad: x.RequiresGrad);
+
+            // 2. Аллокация буфера Workspace для сохранения сырых гейтов
+            // Размер: [SeqLen, Batch, 4 * HiddenSize] * sizeof(float)
+            long workspaceBytes = (long)seqLen * batchSize * 4 * hiddenSize * sizeof(float);
+            workspace = _computeCtx.Context.CreateBuffer(MemoryFlags.ReadWrite, workspaceBytes);
+
+            // 3. Настройка параллельной сетки потоков OpenCL
+            // Размерность Global Work Size строится строго по BATCH_SIZE (каждый поток обрабатывает одну цепочку)
+            // Локальный размер (Local Work Size) выставляем null для автоматического подбора драйвером, либо 32/64/256
+            IntPtr globalSize = new IntPtr(batchSize);
+
+            // Получаем активную очередь команд GPU
+            CommandQueue activeQueue = DeviceQueueRegistry.GetCurrent();
+
+            // 4. Передача аргументов в Си-ядро lstm_forward строго по индексам сигнатуры
+            int argIdx = 0;
+            _kernelLstmForward.Arguments[argIdx++].SetValue(x.DataBuffer);
+            _kernelLstmForward.Arguments[argIdx++].SetValue(w.DataBuffer);
+            _kernelLstmForward.Arguments[argIdx++].SetValue(u.DataBuffer);
+            _kernelLstmForward.Arguments[argIdx++].SetValue(bias.DataBuffer);
+            _kernelLstmForward.Arguments[argIdx++].SetValue(hOut.DataBuffer);
+            _kernelLstmForward.Arguments[argIdx++].SetValue(workspace);
+            //_kernelLstmForward.Arguments[argIdx++].SetValue(UIntPtr.Zero, sizeof(UIntPtr)); // final_C пока передаем как null
+            _kernelLstmForward.Arguments[argIdx++].SetValue(batchSize);
+            _kernelLstmForward.Arguments[argIdx++].SetValue(seqLen);
+            _kernelLstmForward.Arguments[argIdx++].SetValue(inFeatures);
+            _kernelLstmForward.Arguments[argIdx++].SetValue(hiddenSize);
+
+            // 5. Запуск выполнения ядра на GPU и жесткая синхронизация
+            activeQueue.EnqueueNDRangeKernel(_kernelLstmForward,  new[] { globalSize }, null);
+            activeQueue.Finish();
+            if (hOut.RequiresGrad)
+            {
+                hOut.Creator = new LstmOp(x, w, u, bias, hOut, workspace, this);
+            }
+            return hOut;
+        }
+
+        /// <summary>
+        /// Обратный проход глобальной операции LSTM (BPTT) с атомарным накоплением градиентов параметров.
+        /// </summary>
+        /// <param name="gradOutput">Пришедший сверху градиент по выходу dL/dH [Batch, SeqLen, HiddenSize].</param>
+        /// <param name="x">Исходный входной тензор X прямого прохода.</param>
+        /// <param name="w">Матрица весов входа W.</param>
+        /// <param name="u">Матрица весов скрытого состояния U.</param>
+        /// <param name="hOut">Вычисленный в Forward pass тензор скрытых состояний H.</param>
+        /// <param name="workspace">Сохраненный низкоуровневый буфер сырых гейтов из прямого прохода.</param>
+        /// <returns>Выходной градиент функции потерь по входу данных dL/dX [Batch, SeqLen, InFeatures].</returns>
+        public Tensor LstmBackward(Tensor gradOutput, Tensor x, Tensor w, Tensor u, Tensor hOut, NOpenCL.Buffer workspace)
+        {
+            int batchSize = x.Shape[0];
+            int seqLen = x.Shape[1];
+            int inFeatures = x.Shape[2];
+            int hiddenSize = hOut.Shape[2];
+
+            // 1. Выделяем тензор для результирующего градиента по входу dL/dX (форма совпадает с X)
+            Tensor gradX = new Tensor(x.Shape, _computeCtx.Context, MemoryFlags.ReadWrite, requiresGrad: false);
+
+            // 2. Инициализируем буферы градиентов обучаемых параметров весов, если они еще не созданы в Autograd.
+            // Инициализация InitGradient автоматически сработает, если у них выставлен флаг RequiresGrad = true
+            w.InitGradient(_computeCtx.Context);
+            u.InitGradient(_computeCtx.Context);
+            // Обратите внимание: метод InitGradient не зануляет буфер принудительно каждый раз, 
+            // поэтому зануление градиентов параметров перед шагом оптимизации должно происходить через метод ZeroGrad() модели.
+            // Но если это первый проход аккумуляции в текущем графе, убедитесь, что буфер чист.
+
+            // 3. Сетка потоков настраивается аналогично шагу Forward: один поток (Work-item) на один Батч
+            IntPtr globalSize = new IntPtr(batchSize);
+            CommandQueue activeQueue = DeviceQueueRegistry.GetCurrent();
+
+            // 4. Передаем аргументы в Си-ядро lstm_backward
+            int argIdx = 0;
+            _kernelLstmBackward.Arguments[argIdx++].SetValue(x.DataBuffer);
+            _kernelLstmBackward.Arguments[argIdx++].SetValue(w.DataBuffer);
+            _kernelLstmBackward.Arguments[argIdx++].SetValue(u.DataBuffer);
+            _kernelLstmBackward.Arguments[argIdx++].SetValue(hOut.DataBuffer);
+            _kernelLstmBackward.Arguments[argIdx++].SetValue(workspace);
+            _kernelLstmBackward.Arguments[argIdx++].SetValue(gradOutput.DataBuffer);
+            _kernelLstmBackward.Arguments[argIdx++].SetValue(gradX.DataBuffer);
+
+            // Атомарная запись градиентов весов напрямую в .Grad-тензоры параметров
+            _kernelLstmBackward.Arguments[argIdx++].SetValue(w.Grad.DataBuffer);
+            _kernelLstmBackward.Arguments[argIdx++].SetValue(u.Grad.DataBuffer);
+            //_kernelLstmBackward.Arguments[argIdx++].SetValue(w.Creator != null ? ((Tensor)w.Creator).Grad.DataBuffer : (NOpenCL.Buffer)null); // Если у вас есть bias, передаем его буфер градиента, иначе затычка
+            
+            _kernelLstmBackward.Arguments[argIdx++].SetValue(batchSize);
+            _kernelLstmBackward.Arguments[argIdx++].SetValue(seqLen);
+            _kernelLstmBackward.Arguments[argIdx++].SetValue(inFeatures);
+            _kernelLstmBackward.Arguments[argIdx++].SetValue(hiddenSize);
+
+            // 5. Синхронный запуск вычислений BPTT на GPU
+            activeQueue.EnqueueNDRangeKernel(_kernelLstmBackward,  new[] { globalSize }, null);
+            activeQueue.Finish();
+#if false
+            Console.WriteLine("lstm backward end!");
+#endif
+            return gradX;
+        }
+        // Зарегистрируйте ядра _kernelLstmHidForward и _kernelLstmHidBackward в LoadKernels()
+
+        public Tensor LstmWithWithState(Tensor x, Tensor w, Tensor u, Tensor bias, Tensor hPrev, Tensor cPrev,
+                                             int hiddenSize, out Tensor finalH, out Tensor finalC, out NOpenCL.Buffer workspace)
+        {
+            int batchSize = x.Shape[0];
+            int seqLen = x.Shape[1];
+            int inFeatures = x.Shape[2];
+
+            Tensor hOut = new Tensor(new[] { batchSize, seqLen, hiddenSize }, _computeCtx.Context, MemoryFlags.ReadWrite, x.RequiresGrad);
+            finalH = new Tensor(new[] { batchSize, hiddenSize }, _computeCtx.Context, MemoryFlags.ReadWrite, x.RequiresGrad);
+            finalC = new Tensor(new[] { batchSize, hiddenSize }, _computeCtx.Context, MemoryFlags.ReadWrite, x.RequiresGrad);
+
+            long workspaceBytes = (long)seqLen * batchSize * 4 * hiddenSize * sizeof(float);
+            workspace = _computeCtx.Context.CreateBuffer(MemoryFlags.ReadWrite, workspaceBytes);
+
+            IntPtr globalSize = new IntPtr(batchSize);
+            CommandQueue activeQueue = DeviceQueueRegistry.GetCurrent();
+
+            int argIdx = 0;
+            _kernelLstmHidForward.Arguments[argIdx++].SetValue(x.DataBuffer);
+            _kernelLstmHidForward.Arguments[argIdx++].SetValue(w.DataBuffer);
+            _kernelLstmHidForward.Arguments[argIdx++].SetValue(u.DataBuffer);
+            _kernelLstmHidForward.Arguments[argIdx++].SetValue(bias.DataBuffer);
+            _kernelLstmHidForward.Arguments[argIdx++].SetValue(hPrev.DataBuffer);
+            _kernelLstmHidForward.Arguments[argIdx++].SetValue(cPrev.DataBuffer);
+            _kernelLstmHidForward.Arguments[argIdx++].SetValue(hOut.DataBuffer);
+            _kernelLstmHidForward.Arguments[argIdx++].SetValue(workspace);
+            _kernelLstmHidForward.Arguments[argIdx++].SetValue(finalH.DataBuffer);
+            _kernelLstmHidForward.Arguments[argIdx++].SetValue(finalC.DataBuffer);
+            _kernelLstmHidForward.Arguments[argIdx++].SetValue(batchSize);
+            _kernelLstmHidForward.Arguments[argIdx++].SetValue(seqLen);
+            _kernelLstmHidForward.Arguments[argIdx++].SetValue(inFeatures);
+            _kernelLstmHidForward.Arguments[argIdx++].SetValue(hiddenSize);
+
+            activeQueue.EnqueueNDRangeKernel(_kernelLstmHidForward, new[] { globalSize }, null);
+            activeQueue.Finish();
+
+            return hOut;
+        }
+        public (Tensor gradX, Tensor gradHPrev, Tensor gradCPrev) LstmHidBackward(
+    Tensor gradOutput, Tensor x, Tensor w, Tensor u, Tensor bias, // <-- ТЕПЕРЬ ЯВНО ПРИНИМАЕМ BIAS
+    Tensor hPrev, Tensor cPrev, Tensor hOut, NOpenCL.Buffer workspace)
+        {
+            int batchSize = x.Shape[0];
+            int seqLen = x.Shape[1];
+            int inFeatures = x.Shape[2];
+            int hiddenSize = hOut.Shape[2];
+
+            // Выделяем выходные тензоры градиентов для входов данных
+            Tensor gradX = new Tensor(x.Shape, _computeCtx.Context, MemoryFlags.ReadWrite, requiresGrad: false);
+            Tensor gradHPrev = new Tensor(hPrev.Shape, _computeCtx.Context, MemoryFlags.ReadWrite, requiresGrad: false);
+            Tensor gradCPrev = new Tensor(cPrev.Shape, _computeCtx.Context, MemoryFlags.ReadWrite, requiresGrad: false);
+
+            // Лениво инициализируем буферы градиентов для обучаемых параметров модели
+            w.InitGradient(_computeCtx.Context);
+            u.InitGradient(_computeCtx.Context);
+            bias.InitGradient(_computeCtx.Context); // <-- ТЕПЕРЬ ВСЕ КОРРЕКТНО, ОБЪЕКТ BIAS СУЩЕСТВУЕТ В КОНТЕКСТЕ!
+
+            IntPtr globalSize = new IntPtr(batchSize);
+            CommandQueue activeQueue = DeviceQueueRegistry.GetCurrent();
+
+            int argIdx = 0;
+            _kernelLstmHidBackward.Arguments[argIdx++].SetValue(x.DataBuffer);
+            _kernelLstmHidBackward.Arguments[argIdx++].SetValue(w.DataBuffer);
+            _kernelLstmHidBackward.Arguments[argIdx++].SetValue(u.DataBuffer);
+            _kernelLstmHidBackward.Arguments[argIdx++].SetValue(hPrev.DataBuffer);
+            _kernelLstmHidBackward.Arguments[argIdx++].SetValue(cPrev.DataBuffer);
+            _kernelLstmHidBackward.Arguments[argIdx++].SetValue(hOut.DataBuffer);
+            _kernelLstmHidBackward.Arguments[argIdx++].SetValue(workspace);
+            _kernelLstmHidBackward.Arguments[argIdx++].SetValue(gradOutput.DataBuffer);
+
+            // Градиенты, которые рассчитываются на текущем шаге
+            _kernelLstmHidBackward.Arguments[argIdx++].SetValue(gradX.DataBuffer);
+            _kernelLstmHidBackward.Arguments[argIdx++].SetValue(gradHPrev.DataBuffer);
+            _kernelLstmHidBackward.Arguments[argIdx++].SetValue(gradCPrev.DataBuffer);
+
+            // Атомарные буферы для накопления градиентов весов (пишем напрямую в .Grad)
+            _kernelLstmHidBackward.Arguments[argIdx++].SetValue(w.Grad.DataBuffer);
+            _kernelLstmHidBackward.Arguments[argIdx++].SetValue(u.Grad.DataBuffer);
+            _kernelLstmHidBackward.Arguments[argIdx++].SetValue(bias.Grad.DataBuffer); // <-- ПЕРЕДАЕМ НАСТОЯЩИЙ БУФЕР ГРАДИЕНТА BIAS В СИ-ЯДРО
+
+            // Примитивы конфигурации
+            _kernelLstmHidBackward.Arguments[argIdx++].SetValue(batchSize);
+            _kernelLstmHidBackward.Arguments[argIdx++].SetValue(seqLen);
+            _kernelLstmHidBackward.Arguments[argIdx++].SetValue(inFeatures);
+            _kernelLstmHidBackward.Arguments[argIdx++].SetValue(hiddenSize);
+
+            // Синхронный запуск ядра BPTT
+            activeQueue.EnqueueNDRangeKernel(_kernelLstmHidBackward, new[] { globalSize }, null);
+            activeQueue.Finish();
+
+            return (gradX, gradHPrev, gradCPrev);
+        }
+
+
+        #endregion
     }
 }
 
