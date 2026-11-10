@@ -32,10 +32,16 @@
     <None Update="cl_kernels\base_cl_functions.cl">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </None>
+    <None Update="cl_kernels\cat.cl">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </None>
     <None Update="cl_kernels\CausalConv1d.cl">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </None>
     <None Update="cl_kernels\Concat.cl">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </None>
+    <None Update="cl_kernels\cross_entropy.cl">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </None>
     <None Update="cl_kernels\elementwise_ops.cl">
@@ -63,6 +69,9 @@
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </None>
     <None Update="cl_kernels\tensor_copy.cl">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </None>
+    <None Update="cl_kernels\token_one_hot_shift.cl">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </None>
   </ItemGroup>

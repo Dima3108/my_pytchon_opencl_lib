@@ -92,7 +92,11 @@ queue.EnqueueReadBuffer(tensor.Grad.DataBuffer, true, 0, sizeInBytes, (IntPtr)hg
             float[] data = ToCpu(tensor);
             Console.WriteLine("Данные (Forward):");
             PrintFormattedArray(data, tensor.Shape);
-
+            float sum = 0;
+            for (int i = 0; i < data.Length; i++)
+                sum += data[i];
+            sum /= data.Length;
+            Console.WriteLine($"Среднее значение:{sum}");
             if (printGrad)
             {
                 Console.WriteLine("\nГрадиенты (Backward):");

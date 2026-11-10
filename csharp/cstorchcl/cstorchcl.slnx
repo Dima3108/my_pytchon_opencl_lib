@@ -5,5 +5,6 @@
   <Project Path="LocalBecnhmark/LocalBecnhmark.csproj" Id="3c08da65-9802-4c66-bf82-7e52b7402b82" />
   <Project Path="LSTMTest/LSTMTest.csproj" Id="e9a876f6-f7a3-4a4d-8428-2e39ab96fbad" />
   <Project Path="TestLLMComponents/TestLLMComponents.csproj" />
+  <Project Path="TestLSTMRealTrain/TestLSTMRealTrain.csproj" Id="391c592e-c414-4e55-803b-934a333041a5" />
   <Project Path="TrainTest/TrainTest.csproj" Id="153cc626-5d25-47b5-93f5-d27aa5dcaddc" />
 </Solution>

@@ -21,12 +21,16 @@ namespace cstorchcl.compiler
         private Program _prgConv;
         private Program _prgEmbedding;
         private Program _prgLstm;
+        private Program _prCrEtr;//cross entropu
 
         // Кэшированные скомпилированные ядра (экземпляры Kernel)
         private Kernel _kernelSoftmaxForward;
         private Kernel _kernelSoftmaxBackward;
         //lstm
-        private Kernel _kernelLstmForward, _kernelLstmBackward, _kernelLstmHidForward, _kernelLstmHidBackward;
+        private Kernel _kernelLstmForward, _kernelLstmBackward, _kernelLstmHidForward, _kernelLstmHidBackward, _kernelPadSlicedGradient;
+        private Kernel _kernelOneHotShift;
+        //cross entropy
+        private Kernel _crossEtnropyForward, _crossEntropyBackward;
         /// <summary>
         /// Инициализирует диспетчер ядер, привязываясь к активному ComputeContext.
         /// </summary>
@@ -96,8 +100,23 @@ namespace cstorchcl.compiler
             _kernelLstmBackward = _prgLstm.CreateKernel("lstm_backward");
             _kernelLstmHidForward = _prgLstm.CreateKernel("lstm_hid_forward");
             _kernelLstmHidBackward = _prgLstm.CreateKernel("lstm_hid_backward");
-        }
+            _kernelPadSlicedGradient = _prgLstm.CreateKernel("pad_sliced_gradient_kernel");
+            //shift
+            string shiftcode= File.ReadAllText(Path.Combine(kernelsDir, "token_one_hot_shift.cl"));
+            _prgShift= JITProgramCache.GetOrCompile(ctx, dev, shiftcode);
+            _kernelOneHotShift = _prgShift.CreateKernel("token_one_hot_shift");
+            string concat = File.ReadAllText(Path.Combine(kernelsDir, "cat.cl"));
+            _prgCat = JITProgramCache.GetOrCompile(ctx, dev, concat);
+            _kernelCatForward = _prgCat.CreateKernel("cat_2tensors_forward");
+            _kernelCatBackward = _prgCat.CreateKernel("cat_2tensors_backward");
+            //cross entropy
+            string cr = File.ReadAllText(Path.Combine(kernelsDir, "cross_entropy.cl"));
+            _prCrEtr = JITProgramCache.GetOrCompile(ctx, dev, cr);
+            _crossEtnropyForward = _prCrEtr.CreateKernel("cross_entropy_forward");
+            _crossEntropyBackward = _prCrEtr.CreateKernel("cross_entropy_backward");
 
+        }
+        private NOpenCL.Program _prgShift, _prgCat;
         // =========================================================================
         // РЕАЛИЗАЦИЯ ОПЕРАЦИЙ (FORWARD PASS)
         // =========================================================================
@@ -616,12 +635,15 @@ namespace cstorchcl.compiler
             _kernelEmbeddingForward.Arguments[t++].SetValue(y.DataBuffer);
             _kernelEmbeddingForward.Arguments[t++].SetValue(embeddingDim);
             _kernelEmbeddingForward.Arguments[t++].SetValue(totalTokens);
-
+            int lX = _computeCtx.MAX_WORK_GPOUP_SIZE_X;
+            int lY = _computeCtx.MAX_WORK_GPOUP_SIZE_Y;
+            while (globalSizeX % lX != 0) lX--;
+            while (globalSizeY % lY != 0) lY--;
             activeQueue.EnqueueNDRangeKernel(
-                _kernelEmbeddingForward,
-                
-                new[] { globalSizeX, globalSizeY },
-                null
+                 _kernelEmbeddingForward,
+
+                 new[] { globalSizeX, globalSizeY },
+                 new[] { (IntPtr)lX, (IntPtr)lY }
             );
             activeQueue.Finish();
 
@@ -840,29 +862,32 @@ namespace cstorchcl.compiler
         /// <returns>Выходной тензор скрытых состояний H [Batch, SeqLen, HiddenSize].</returns>
         public unsafe Tensor Lstm(Tensor x, Tensor w, Tensor u, Tensor bias, int hiddenSize, out NOpenCL.Buffer workspace)
         {
-            // Извлекаем базовые размерности из формы входного тензора
             int batchSize = x.Shape[0];
             int seqLen = x.Shape[1];
             int inFeatures = x.Shape[2];
-
-            // 1. Аллокация результирующего тензора скрытых состояний H [Batch, SeqLen, HiddenSize]
+#if false
+            Console.WriteLine(batchSize);
+#endif
             int[] outputShape = new int[] { batchSize, seqLen, hiddenSize };
             Tensor hOut = new Tensor(outputShape, _computeCtx.Context, MemoryFlags.ReadWrite, requiresGrad: x.RequiresGrad);
 
-            // 2. Аллокация буфера Workspace для сохранения сырых гейтов
-            // Размер: [SeqLen, Batch, 4 * HiddenSize] * sizeof(float)
             long workspaceBytes = (long)seqLen * batchSize * 4 * hiddenSize * sizeof(float);
             workspace = _computeCtx.Context.CreateBuffer(MemoryFlags.ReadWrite, workspaceBytes);
 
-            // 3. Настройка параллельной сетки потоков OpenCL
-            // Размерность Global Work Size строится строго по BATCH_SIZE (каждый поток обрабатывает одну цепочку)
-            // Локальный размер (Local Work Size) выставляем null для автоматического подбора драйвером, либо 32/64/256
-            IntPtr globalSize = new IntPtr(batchSize);
+            // === ДИНАМИЧЕСКАЯ АЛЛОКАЦИЯ ПРОМЕЖУТОЧНЫХ БУФЕРОВ ===
+            long tempBufferBytes = (long)batchSize * hiddenSize * sizeof(float);
 
-            // Получаем активную очередь команд GPU
+            using NOpenCL.Buffer cCurrBuf = _computeCtx.Context.CreateBuffer(MemoryFlags.ReadWrite, tempBufferBytes);
+            using NOpenCL.Buffer hCurrBuf = _computeCtx.Context.CreateBuffer(MemoryFlags.ReadWrite, tempBufferBytes);
+
+            int s = 1 + (int)Math.Sqrt(batchSize);
+            int lX = _computeCtx.MAX_WORK_GPOUP_SIZE_X;
+            int lY = _computeCtx.MAX_WORK_GPOUP_SIZE_Y;
+            while (batchSize% lX > 0) lX--;
+            while (hiddenSize%lY > 0) lY--;
+
             CommandQueue activeQueue = DeviceQueueRegistry.GetCurrent();
 
-            // 4. Передача аргументов в Си-ядро lstm_forward строго по индексам сигнатуры
             int argIdx = 0;
             _kernelLstmForward.Arguments[argIdx++].SetValue(x.DataBuffer);
             _kernelLstmForward.Arguments[argIdx++].SetValue(w.DataBuffer);
@@ -870,20 +895,26 @@ namespace cstorchcl.compiler
             _kernelLstmForward.Arguments[argIdx++].SetValue(bias.DataBuffer);
             _kernelLstmForward.Arguments[argIdx++].SetValue(hOut.DataBuffer);
             _kernelLstmForward.Arguments[argIdx++].SetValue(workspace);
-            //_kernelLstmForward.Arguments[argIdx++].SetValue(UIntPtr.Zero, sizeof(UIntPtr)); // final_C пока передаем как null
+
+            // Передаем временные буферы в ядро
+            _kernelLstmForward.Arguments[argIdx++].SetValue(cCurrBuf);
+            _kernelLstmForward.Arguments[argIdx++].SetValue(hCurrBuf);
+
             _kernelLstmForward.Arguments[argIdx++].SetValue(batchSize);
             _kernelLstmForward.Arguments[argIdx++].SetValue(seqLen);
             _kernelLstmForward.Arguments[argIdx++].SetValue(inFeatures);
             _kernelLstmForward.Arguments[argIdx++].SetValue(hiddenSize);
 
-            // 5. Запуск выполнения ядра на GPU и жесткая синхронизация
-            activeQueue.EnqueueNDRangeKernel(_kernelLstmForward,  new[] { globalSize }, null);
+            activeQueue.EnqueueNDRangeKernel(_kernelLstmForward, new IntPtr[] { (IntPtr)batchSize, (IntPtr)hiddenSize }, new nint[] { (IntPtr)lX, (IntPtr)lY });
             activeQueue.Finish();
+
             if (hOut.RequiresGrad)
             {
                 hOut.Creator = new LstmOp(x, w, u, bias, hOut, workspace, this);
             }
+
             return hOut;
+            // Блок using гарантирует автоматический вызов cCurrBuf.Dispose() и hCurrBuf.Dispose() здесь
         }
 
         /// <summary>
@@ -903,22 +934,28 @@ namespace cstorchcl.compiler
             int inFeatures = x.Shape[2];
             int hiddenSize = hOut.Shape[2];
 
-            // 1. Выделяем тензор для результирующего градиента по входу dL/dX (форма совпадает с X)
             Tensor gradX = new Tensor(x.Shape, _computeCtx.Context, MemoryFlags.ReadWrite, requiresGrad: false);
 
-            // 2. Инициализируем буферы градиентов обучаемых параметров весов, если они еще не созданы в Autograd.
-            // Инициализация InitGradient автоматически сработает, если у них выставлен флаг RequiresGrad = true
             w.InitGradient(_computeCtx.Context);
             u.InitGradient(_computeCtx.Context);
-            // Обратите внимание: метод InitGradient не зануляет буфер принудительно каждый раз, 
-            // поэтому зануление градиентов параметров перед шагом оптимизации должно происходить через метод ZeroGrad() модели.
-            // Но если это первый проход аккумуляции в текущем графе, убедитесь, что буфер чист.
 
-            // 3. Сетка потоков настраивается аналогично шагу Forward: один поток (Work-item) на один Батч
-            IntPtr globalSize = new IntPtr(batchSize);
+            // === ДИНАМИЧЕСКАЯ АЛЛОКАЦИЯ ПРОМЕЖУТОЧНЫХ БУФЕРОВ ДЛЯ BACKWARD ===
+            long tempBufBytes = (long)batchSize * hiddenSize * sizeof(float);
+            long gatesBufBytes = (long)batchSize * 4 * hiddenSize * sizeof(float); // Гейтов 4 штуки
+
+            using NOpenCL.Buffer dhNextBuf = _computeCtx.Context.CreateBuffer(MemoryFlags.ReadWrite, tempBufBytes);
+            using NOpenCL.Buffer dcNextBuf = _computeCtx.Context.CreateBuffer(MemoryFlags.ReadWrite, tempBufBytes);
+            using NOpenCL.Buffer cAccumBuf = _computeCtx.Context.CreateBuffer(MemoryFlags.ReadWrite, tempBufBytes);
+            using NOpenCL.Buffer gradGatesBuf = _computeCtx.Context.CreateBuffer(MemoryFlags.ReadWrite, gatesBufBytes);
+
+            int s = 1 + (int)Math.Sqrt(batchSize);
+            int lX = _computeCtx.MAX_WORK_GPOUP_SIZE_X;
+            int lY = _computeCtx.MAX_WORK_GPOUP_SIZE_Y;
+            while (batchSize % lX > 0) lX--;
+            while (hiddenSize % lY > 0) lY--;
+
             CommandQueue activeQueue = DeviceQueueRegistry.GetCurrent();
 
-            // 4. Передаем аргументы в Си-ядро lstm_backward
             int argIdx = 0;
             _kernelLstmBackward.Arguments[argIdx++].SetValue(x.DataBuffer);
             _kernelLstmBackward.Arguments[argIdx++].SetValue(w.DataBuffer);
@@ -928,24 +965,27 @@ namespace cstorchcl.compiler
             _kernelLstmBackward.Arguments[argIdx++].SetValue(gradOutput.DataBuffer);
             _kernelLstmBackward.Arguments[argIdx++].SetValue(gradX.DataBuffer);
 
-            // Атомарная запись градиентов весов напрямую в .Grad-тензоры параметров
             _kernelLstmBackward.Arguments[argIdx++].SetValue(w.Grad.DataBuffer);
             _kernelLstmBackward.Arguments[argIdx++].SetValue(u.Grad.DataBuffer);
-            //_kernelLstmBackward.Arguments[argIdx++].SetValue(w.Creator != null ? ((Tensor)w.Creator).Grad.DataBuffer : (NOpenCL.Buffer)null); // Если у вас есть bias, передаем его буфер градиента, иначе затычка
-            
+
+            // Передаем выделенные буферы
+            _kernelLstmBackward.Arguments[argIdx++].SetValue(dhNextBuf);
+            _kernelLstmBackward.Arguments[argIdx++].SetValue(dcNextBuf);
+            _kernelLstmBackward.Arguments[argIdx++].SetValue(cAccumBuf);
+            _kernelLstmBackward.Arguments[argIdx++].SetValue(gradGatesBuf);
+
             _kernelLstmBackward.Arguments[argIdx++].SetValue(batchSize);
             _kernelLstmBackward.Arguments[argIdx++].SetValue(seqLen);
             _kernelLstmBackward.Arguments[argIdx++].SetValue(inFeatures);
             _kernelLstmBackward.Arguments[argIdx++].SetValue(hiddenSize);
 
-            // 5. Синхронный запуск вычислений BPTT на GPU
-            activeQueue.EnqueueNDRangeKernel(_kernelLstmBackward,  new[] { globalSize }, null);
+            activeQueue.EnqueueNDRangeKernel(_kernelLstmBackward, new IntPtr[] { (IntPtr)batchSize, (IntPtr)hiddenSize }, new nint[] { (IntPtr)lX, (IntPtr)lY });
             activeQueue.Finish();
-#if false
-            Console.WriteLine("lstm backward end!");
-#endif
+
             return gradX;
+            // Все 4 буфера очищаются во VRAM прямо здесь
         }
+
         // Зарегистрируйте ядра _kernelLstmHidForward и _kernelLstmHidBackward в LoadKernels()
 
         public Tensor LstmWithWithState(Tensor x, Tensor w, Tensor u, Tensor bias, Tensor hPrev, Tensor cPrev,
@@ -1042,6 +1082,341 @@ namespace cstorchcl.compiler
         }
 
 
+        #endregion
+        #region FusinCat
+        /// <summary>
+        /// Выполняет эффективное слияние двух тензоров по последней оси во VRAM.
+        /// Исключает необходимость в тяжелом кастомном ядре за счет высокоуровневых команд OpenCL.
+        /// </summary>
+        public static void FuseBuffersToConcat(Tensor left, Tensor right, Tensor destination, int hiddenDim)
+        {
+            int batchSize = left.Shape[0];
+            int seqLen = left.Shape[1];
+
+            long rowBytes = (long)hiddenDim * sizeof(float);
+            long destRowBytes = rowBytes * 2; // Строка назначения в 2 раза шире
+
+            CommandQueue queue = DeviceQueueRegistry.GetCurrent();
+
+            // Итерируемся по строкам батча и последовательности
+            for (int b = 0; b < batchSize; b++)
+            {
+                for (int t = 0; t < seqLen; t++)
+                {
+                    // Вычисляем плоские смещения для исходных тензоров
+                    long srcOffset = (long)(b * seqLen + t) * rowBytes;
+
+                    // Вычисляем смещения в результирующем широком тензоре
+                    long destLeftOffset = (long)(b * seqLen + t) * destRowBytes;
+                    long destRightOffset = destLeftOffset + rowBytes; // Сдвиг на ширину левой половины
+
+                    // Копируем левую половину (Embedded Decoder)
+                    queue.EnqueueCopyBuffer(left.DataBuffer, destination.DataBuffer, (IntPtr)srcOffset, (IntPtr)destLeftOffset, (IntPtr)rowBytes);
+
+                    // Копируем правую половину (Encoder Outputs)
+                    queue.EnqueueCopyBuffer(right.DataBuffer, destination.DataBuffer, (IntPtr)srcOffset, (IntPtr)destRightOffset, (IntPtr)rowBytes);
+                }
+            }
+            queue.Finish();
+        }
+
+        /// <summary>
+        /// Обратная операция: разрезает градиент широкого буфера на две исходные половины.
+        /// </summary>
+        public static void SplitConcatGradients(Tensor gradDestination, Tensor gradLeft, Tensor gradRight, int hiddenDim)
+        {
+            int batchSize = gradLeft.Shape[0];
+            int seqLen = gradLeft.Shape[1];
+
+            long rowBytes = (long)hiddenDim * sizeof(float);
+            long srcRowBytes = rowBytes * 2;
+
+            CommandQueue queue = DeviceQueueRegistry.GetCurrent();
+
+            for (int b = 0; b < batchSize; b++)
+            {
+                for (int t = 0; t < seqLen; t++)
+                {
+                    long destOffset = (long)(b * seqLen + t) * rowBytes;
+
+                    long srcLeftOffset = (long)(b * seqLen + t) * srcRowBytes;
+                    long srcRightOffset = srcLeftOffset + rowBytes;
+
+                    // Вырезаем градиенты для левой половины
+                    queue.EnqueueCopyBuffer(gradDestination.DataBuffer, gradLeft.DataBuffer, (IntPtr)srcLeftOffset, (IntPtr)destOffset, (IntPtr)rowBytes);
+
+                    // Вырезаем градиенты для правой половины
+                    queue.EnqueueCopyBuffer(gradDestination.DataBuffer, gradRight.DataBuffer, (IntPtr)srcRightOffset, (IntPtr)destOffset, (IntPtr)rowBytes);
+                }
+            }
+            queue.Finish();
+        }
+        #endregion
+        // Зарегистрируйте _kernelOneHotShift = prg.CreateKernel("token_one_hot_shift") в LoadKernels()
+
+        public Tensor PrepareTrueTargets(NOpenCL.Buffer tokensBuf, int batchSize, int seqLen, int vocabSize)
+        {
+            // Новая временная шкала уменьшается на 1 из-за среза [:, 1:]
+            int targetSeqLen = seqLen - 1;
+            var targetShape =new int[] { batchSize, targetSeqLen, vocabSize };
+
+            Tensor targetTensor = new Tensor(targetShape, _computeCtx.Context, MemoryFlags.ReadWrite, requiresGrad: false);
+
+            CommandQueue queue = DeviceQueueRegistry.GetCurrent();
+
+            // Двумерная сетка потоков: [Батчи, Шаги времени]
+            var globalWorkSize = new IntPtr[] { (IntPtr)batchSize, (IntPtr)targetSeqLen };
+
+            _kernelOneHotShift.Arguments[0].SetValue(tokensBuf);
+            _kernelOneHotShift.Arguments[1].SetValue(targetTensor.DataBuffer);
+            _kernelOneHotShift.Arguments[2].SetValue(seqLen);
+            _kernelOneHotShift.Arguments[3].SetValue(vocabSize);
+
+            queue.EnqueueNDRangeKernel(_kernelOneHotShift, globalWorkSize, null);
+            queue.Finish();
+
+            return targetTensor;
+        }
+        /// <summary>
+        /// Физически расширяет усеченный градиент до оригинальной формы на GPU.
+        /// Заполняет отсутствующий последний временной шаг нулями.
+        /// </summary>
+        public  void PadSlicedGradient(Tensor gradSliced, Tensor gradOriginal)
+        {
+            int batchSize = gradOriginal.Shape[0];
+            int oldSeqLen = gradOriginal.Shape[1];
+            int vocabSize = gradOriginal.Shape[2];
+
+            CommandQueue queue = DeviceQueueRegistry.GetCurrent();
+
+            // Настраиваем двумерную сетку потоков: [Батчи, Полная длина исходной последовательности]
+            var globalWorkSize = new IntPtr[] { (IntPtr)batchSize, (IntPtr)oldSeqLen };
+
+            // Передаем аргументы строго по индексам сигнатуры ядра
+            _kernelPadSlicedGradient.Arguments[0].SetValue(gradSliced.DataBuffer);
+            _kernelPadSlicedGradient.Arguments[1].SetValue(gradOriginal.DataBuffer);
+            _kernelPadSlicedGradient.Arguments[2].SetValue(oldSeqLen);
+            _kernelPadSlicedGradient.Arguments[3].SetValue(vocabSize);
+
+            // Асинхронно запускаем параллельное заполнение на видеокарте
+            queue.EnqueueNDRangeKernel(_kernelPadSlicedGradient, globalWorkSize, null);
+            queue.Finish();
+        }
+        public Tensor SliceLogitsForLoss(Tensor logits, ComputeContext _computeCtx)
+        {
+            int batchSize = logits.Shape[0];
+            int oldSeqLen = logits.Shape[1];
+            int vocabSize = logits.Shape[2];
+            int newSeqLen = oldSeqLen - 1;
+
+            Tensor slicedLogits = new Tensor(new int[] { batchSize, newSeqLen, vocabSize }, _computeCtx.Context, MemoryFlags.ReadWrite, requiresGrad: logits.RequiresGrad);
+
+            long rowBytes = (long)vocabSize * sizeof(float);
+            CommandQueue queue = DeviceQueueRegistry.GetCurrent();
+
+            // Копируем только первые (seqLen - 1) шагов времени для каждого батча
+            for (int b = 0; b < batchSize; b++)
+            {
+                long srcOffset = (long)b * oldSeqLen * rowBytes;
+                long destOffset = (long)b * newSeqLen * rowBytes;
+                long bytesToCopy = (long)newSeqLen * rowBytes;
+
+                queue.EnqueueCopyBuffer(logits.DataBuffer, slicedLogits.DataBuffer, (IntPtr)srcOffset, (IntPtr)destOffset, (IntPtr)bytesToCopy);
+            }
+            queue.Finish();
+
+            // Привязываем создателя для автодифференцирования (SliceOp)
+            if (slicedLogits.RequiresGrad)
+            {
+                // Сюда можно передать стандартную SliceOp операцию вашей библиотеки
+                slicedLogits.Creator = new SliceOp(logits, slicedLogits, this);
+            }
+
+            return slicedLogits;
+        }
+        #region CAT
+        /// <summary>
+        /// Глобальная операция конкатенации двух тензоров по последней оси (dim = -1).
+        /// </summary>
+        public Tensor Cat(Tensor x1, Tensor x2, int dim = -1)
+        {
+            int targetDim = dim == -1 ? x1.Shape.Length - 1 : dim;
+            if (targetDim != x1.Shape.Length - 1)
+            {
+                throw new NotSupportedException("Текущая реализация Cat поддерживает конкатенацию только по последней оси.");
+            }
+
+            // Проверяем, что все размерности кроме последней совпадают
+            for (int i = 0; i < x1.Shape.Length - 1; i++)
+            {
+                if (x1.Shape[i] != x2.Shape[i])
+                    throw new ArgumentException($"Размерности тензоров не совпадают на оси {i}: {x1.Shape[i]} != {x2.Shape[i]}");
+            }
+
+            int dim1 = x1.Shape[x1.Shape.Length - 1];
+            int dim2 = x2.Shape[x2.Shape.Length - 1];
+            int outDim = dim1 + dim2;
+
+            // Вычисляем новую форму
+            int[] outShape = (int[])x1.Shape.Clone();
+            outShape[outShape.Length - 1] = outDim;
+
+            int numRows = x1.Size / dim1; // Количество плоских строк (B * SeqLen)
+
+            // Создаем результирующий тензор во VRAM
+            bool requiresGrad = x1.RequiresGrad || x2.RequiresGrad;
+            Tensor y = new Tensor(outShape, _computeCtx.Context, MemoryFlags.ReadWrite, requiresGrad: requiresGrad);
+
+            // Настройка сетки потоков (1 поток на одну строку)
+            IntPtr localSize = new IntPtr(64);
+            int globalWorkSize = ((numRows + 63) / 64) * 64;
+            IntPtr globalSize = new IntPtr(globalWorkSize);
+
+            CommandQueue activeQueue = DeviceQueueRegistry.GetCurrent();
+
+            // Передаем аргументы в OpenCL ядро
+            _kernelCatForward.Arguments[0].SetValue(x1.DataBuffer);
+            _kernelCatForward.Arguments[1].SetValue(x2.DataBuffer);
+            _kernelCatForward.Arguments[2].SetValue(y.DataBuffer);
+            _kernelCatForward.Arguments[3].SetValue(numRows);
+            _kernelCatForward.Arguments[4].SetValue(dim1);
+            _kernelCatForward.Arguments[5].SetValue(dim2);
+
+            activeQueue.EnqueueNDRangeKernel(_kernelCatForward, new[] { globalSize }, new[] { localSize });
+            activeQueue.Finish();
+
+            // Регистрация в Autograd графе
+            if (y.RequiresGrad)
+            {
+                y.Creator = new CatOp(x1, x2, y, this);
+            }
+
+            return y;
+        }
+
+        /// <summary>
+        /// Реализация обратного прохода ядра Cat для Autograd.
+        /// </summary>
+        public (Tensor gradInput1, Tensor gradInput2) CatBackward(Tensor gradOutput, Tensor x1, Tensor x2)
+        {
+            int dim1 = x1.Shape[x1.Shape.Length - 1];
+            int dim2 = x2.Shape[x2.Shape.Length - 1];
+            int numRows = x1.Size / dim1;
+
+            // Выделяем память под градиенты исходных тензоров
+            Tensor gradInput1 = new Tensor(x1.Shape, _computeCtx.Context, MemoryFlags.ReadWrite, requiresGrad: false);
+            Tensor gradInput2 = new Tensor(x2.Shape, _computeCtx.Context, MemoryFlags.ReadWrite, requiresGrad: false);
+
+            IntPtr localSize = new IntPtr(64);
+            int globalWorkSize = ((numRows + 63) / 64) * 64;
+            IntPtr globalSize = new IntPtr(globalWorkSize);
+
+            CommandQueue activeQueue = DeviceQueueRegistry.GetCurrent();
+
+            _kernelCatBackward.Arguments[0].SetValue(gradOutput.DataBuffer);
+            _kernelCatBackward.Arguments[1].SetValue(gradInput1.DataBuffer);
+            _kernelCatBackward.Arguments[2].SetValue(gradInput2.DataBuffer);
+            _kernelCatBackward.Arguments[3].SetValue(numRows);
+            _kernelCatBackward.Arguments[4].SetValue(dim1);
+            _kernelCatBackward.Arguments[5].SetValue(dim2);
+
+            activeQueue.EnqueueNDRangeKernel(_kernelCatBackward, new[] { globalSize }, new[] { localSize });
+            activeQueue.Finish();
+
+            return (gradInput1, gradInput2);
+        }
+        Kernel _kernelCatBackward, _kernelCatForward;
+        #endregion
+        #region CrossEntropy
+        /// <summary>
+        /// Вычисляет стабильный CrossEntropyLoss напрямую из сырых логитов сети.
+        /// </summary>
+        public Tensor CrossEntropyLoss(Tensor pred, Tensor target)
+        {
+            // Ошибка — это всегда скаляр (1 элемент)
+            Tensor loss = new Tensor(new[] { 1 }, _computeCtx.Context, MemoryFlags.ReadWrite, requiresGrad: pred.RequiresGrad);
+
+            // Предварительно обнуляем буфер лосса на GPU, так как ядро будет делать в него прибавления (atomic)
+            float[] zero = new float[] { 0.0f };
+            CommandQueue queue = DeviceQueueRegistry.GetCurrent();
+            unsafe
+            {
+                fixed (float* pZ = zero)
+                {
+                    queue.EnqueueWriteBuffer(loss.DataBuffer, true, 0, sizeof(float), (IntPtr)pZ);
+                }
+            }
+
+            int vocabSize = pred.Shape[pred.Shape.Length - 1]; // Последняя ось (6565)
+            int numRows = pred.Size / vocabSize;             // B * (SeqLen - 1)
+
+            // Компилируем/берем исходник ядра (forward код из секции 1)
+            /*tring kernelSource = @"...[Вставьте сюда код ядра cross_entropy_forward]...";
+             var prg = JITProgramCache.GetOrCompile(_computeCtx.Context, _computeCtx.Device, kernelSource);
+
+             using var kernel = prg.CreateKernel("cross_entropy_forward");*/
+            //crossEtnropyForwa   guments[0].SetValue(pred.DataBuffer);
+
+            /*ernel.Arguments[1].SetValue(target.DataBuffer);
+             kernel.Arguments[2].SetValue(loss.DataBuffer);
+             kernel.Arguments[3].SetValue(vocabSize);
+             kernel.Arguments[4].SetValue(numRows);*/
+            int t = 0;
+            _crossEtnropyForward.Arguments[t++].SetValue(pred.DataBuffer);
+            _crossEtnropyForward.Arguments[t++].SetValue(target.DataBuffer);
+            _crossEtnropyForward.Arguments[t++].SetValue(loss.DataBuffer);
+            _crossEtnropyForward.Arguments[t++].SetValue(vocabSize);
+            _crossEtnropyForward.Arguments[t++].SetValue(numRows);
+
+            // Сетка запуска: 1 рабочая группа (256 потоков) на каждую строку тензора логитов
+            IntPtr localSize = new IntPtr(256);
+            IntPtr globalSize = new IntPtr(numRows * 256);
+
+            queue.EnqueueNDRangeKernel(_crossEtnropyForward,new[] { globalSize }, new[] { localSize });
+            queue.Finish();
+
+            if (loss.RequiresGrad)
+            {
+                loss.Creator = new CrossEntropyLossOp(pred, target, loss, this);
+            }
+            return loss;
+        }
+
+        /// <summary>
+        /// Вычисляет градиент обратного прохода для CrossEntropyLoss.
+        /// </summary>
+        public Tensor CrossEntropyLossBackward(Tensor pred, Tensor target)
+        {
+            Tensor gradInput = new Tensor(pred.Shape, _computeCtx.Context, MemoryFlags.ReadWrite, requiresGrad: false);
+
+            int vocabSize = pred.Shape[pred.Shape.Length - 1];
+            int numRows = pred.Size / vocabSize;
+            /*
+            string kernelSource = @"...[Вставьте сюда код ядра cross_entropy_backward]...";
+            var prg = JITProgramCache.GetOrCompile(_computeCtx.Context, _computeCtx.Device, kernelSource);
+
+            using var kernel = prg.CreateKernel("cross_entropy_backward");*/
+            /*ernel.Arguments[0].SetValue(pred.DataBuffer);
+             kernel.Arguments[1].SetValue(target.DataBuffer);
+             kernel.Arguments[2].SetValue(gradInput.DataBuffer);
+             kernel.Arguments[3].SetValue(vocabSize);
+             kernel.Arguments[4].SetValue(numRows);*/
+            int t = 0;
+            _crossEntropyBackward.Arguments[t++].SetValue(pred.DataBuffer);
+            _crossEntropyBackward.Arguments[t++].SetValue(target.DataBuffer);
+            _crossEntropyBackward.Arguments[t++].SetValue(gradInput.DataBuffer);
+            _crossEntropyBackward.Arguments[t++].SetValue(vocabSize);
+            _crossEntropyBackward.Arguments[t++].SetValue(numRows);
+
+            IntPtr localSize = new IntPtr(256);
+            IntPtr globalSize = new IntPtr(numRows * 256);
+
+            CommandQueue queue = DeviceQueueRegistry.GetCurrent();
+            queue.EnqueueNDRangeKernel(_crossEntropyBackward, new[] { globalSize }, new[] { localSize });
+            queue.Finish();
+
+            return gradInput;
+        }
         #endregion
     }
 }

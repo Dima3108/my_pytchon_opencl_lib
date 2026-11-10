@@ -282,7 +282,7 @@ namespace cstorchcl.tests
     }
     class Program
     {
-        static void Main(string[] args) => LstmStatefulDebugger.RunStatefulTest();
+        static void Main(string[] args) => LstmDebugger.TestTrain();
     }
 
 

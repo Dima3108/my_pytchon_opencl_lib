@@ -18,7 +18,7 @@ namespace cstorchcl.core
         /// <summary>
         /// Форма тензора (размеры по осям, например: [Batch, Head, SeqLen, Dim]).
         /// </summary>
-        public int[] Shape { get; init; }
+        public int[] Shape { get; private set; }
 
         /// <summary>
         /// Общее количество элементов в тензоре (произведение всех элементов Shape).
@@ -95,6 +95,23 @@ namespace cstorchcl.core
                 throw new InvalidOperationException(
                     $"Ошибка выделения GPU буфера размером {sizeInBytes} байт для формы [{string.Join(", ", Shape)}].", ex);
             }
+        }
+        public void ReShape(int[] newshape)
+        {
+            int l = Shape[0];
+            for (int i = 1; i < Shape.Length; i++)
+                l *= Shape[i];
+            int new_l = newshape[0];
+            for (int s = 1; s < newshape.Length; s++)
+                new_l *= newshape[s];
+            if (l != new_l)
+            {
+                throw new InsufficientMemoryException($"несовпадают полные размеры новой и тсарой размерногстей!{l}!={new_l}");
+
+            }
+            Shape = new int[newshape.Length];
+            newshape.CopyTo(Shape, 0);
+            Strides = CalculateStrides(Shape);
         }
         /// <summary>
         /// Создает экземпляр тензора и сразу загружает в него данные из C# массива float[] во VRAM.
@@ -252,7 +269,7 @@ namespace cstorchcl.core
         /// Шаги (strides) тензора для каждой оси. Показывают смещение в плоском массиве.
         /// Например, для Shape [2, 3, 4] Strides будут.
         /// </summary>
-        public int[] Strides { get; init; }
+        public int[] Strides { get; private set; }
 
         // Добавьте вызов этого метода в конструкторы класса Tensor сразу после Size = CalculateSize(shape);
         // Strides = CalculateStrides(Shape);
