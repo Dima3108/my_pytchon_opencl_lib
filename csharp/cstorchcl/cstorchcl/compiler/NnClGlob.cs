@@ -951,14 +951,17 @@ namespace cstorchcl.compiler
             }*/
 
             int a1 = 0;
-            _kernelLstmRecurrentBackward.Arguments[a1++].SetValue(u.DataBuffer);
-            _kernelLstmRecurrentBackward.Arguments[a1++].SetValue(workspace);
-            _kernelLstmRecurrentBackward.Arguments[a1++].SetValue(gradOutput.DataBuffer);
+          
+            {
+                _kernelLstmRecurrentBackward.Arguments[a1++].SetValue(u.DataBuffer);
+                _kernelLstmRecurrentBackward.Arguments[a1++].SetValue(workspace);
+                _kernelLstmRecurrentBackward.Arguments[a1++].SetValue(gradOutput.DataBuffer);
 
-            _kernelLstmRecurrentBackward.Arguments[a1++].SetValue(allGradGatesBuf);
-            _kernelLstmRecurrentBackward.Arguments[a1++].SetValue(dhNextBuf);
-            _kernelLstmRecurrentBackward.Arguments[a1++].SetValue(dcNextBuf);
-
+                _kernelLstmRecurrentBackward.Arguments[a1++].SetValue(allGradGatesBuf);
+                _kernelLstmRecurrentBackward.Arguments[a1++].SetValue(dhNextBuf);
+                _kernelLstmRecurrentBackward.Arguments[a1++].SetValue(dcNextBuf);
+            }
+     
             _kernelLstmRecurrentBackward.Arguments[a1++].SetValue(batchSize);
             _kernelLstmRecurrentBackward.Arguments[a1++].SetValue(seqLen);
             _kernelLstmRecurrentBackward.Arguments[a1++].SetValue(hiddenSize);
@@ -1003,12 +1006,16 @@ namespace cstorchcl.compiler
             int gwGlobalY = ((maxWeightRows + TILE_SIZE - 1) / TILE_SIZE) * TILE_SIZE;
 
             int a3 = 0;
-            _kernelLstmGemmGradWeights.Arguments[a3++].SetValue(x.DataBuffer);
-            _kernelLstmGemmGradWeights.Arguments[a3++].SetValue(hOut.DataBuffer);
-            _kernelLstmGemmGradWeights.Arguments[a3++].SetValue(allGradGatesBuf);
-            _kernelLstmGemmGradWeights.Arguments[a3++].SetValue(w.Grad.DataBuffer);
-            _kernelLstmGemmGradWeights.Arguments[a3++].SetValue(u.Grad.DataBuffer);
-            _kernelLstmGemmGradWeights.Arguments[a3++].SetValue(bias.Grad.DataBuffer);
+            
+            {
+                _kernelLstmGemmGradWeights.Arguments[a3++].SetValue(x.DataBuffer);
+                _kernelLstmGemmGradWeights.Arguments[a3++].SetValue(hOut.DataBuffer);
+                _kernelLstmGemmGradWeights.Arguments[a3++].SetValue(allGradGatesBuf);
+                _kernelLstmGemmGradWeights.Arguments[a3++].SetValue(w.Grad.DataBuffer);
+                _kernelLstmGemmGradWeights.Arguments[a3++].SetValue(u.Grad.DataBuffer);
+                _kernelLstmGemmGradWeights.Arguments[a3++].SetValue(bias.Grad.DataBuffer);
+            }
+        
             _kernelLstmGemmGradWeights.Arguments[a3++].SetValue(batchSize);
             _kernelLstmGemmGradWeights.Arguments[a3++].SetValue(seqLen);
             _kernelLstmGemmGradWeights.Arguments[a3++].SetValue(inFeatures);
@@ -1238,7 +1245,9 @@ namespace cstorchcl.compiler
 
             // Настраиваем двумерную сетку потоков: [Батчи, Полная длина исходной последовательности]
             var globalWorkSize = new IntPtr[] { (IntPtr)batchSize, (IntPtr)oldSeqLen };
-
+            int  lY = 16;
+            while (oldSeqLen % lY > 0)
+                lY--;
             // Передаем аргументы строго по индексам сигнатуры ядра
             _kernelPadSlicedGradient.Arguments[0].SetValue(gradSliced.DataBuffer);
             _kernelPadSlicedGradient.Arguments[1].SetValue(gradOriginal.DataBuffer);
@@ -1246,7 +1255,7 @@ namespace cstorchcl.compiler
             _kernelPadSlicedGradient.Arguments[3].SetValue(vocabSize);
 
             // Асинхронно запускаем параллельное заполнение на видеокарте
-            queue.EnqueueNDRangeKernel(_kernelPadSlicedGradient, globalWorkSize, null);
+            queue.EnqueueNDRangeKernel(_kernelPadSlicedGradient, globalWorkSize, new IntPtr[] {(IntPtr)1,(IntPtr)lY});
             //queue.Finish();
         }
         public Tensor SliceLogitsForLoss(Tensor logits, ComputeContext _computeCtx)
@@ -1359,10 +1368,12 @@ namespace cstorchcl.compiler
             IntPtr globalSize = new IntPtr(globalWorkSize);
 
             CommandQueue activeQueue = DeviceQueueRegistry.GetCurrent();
-
-            _kernelCatBackward.Arguments[0].SetValue(gradOutput.DataBuffer);
-            _kernelCatBackward.Arguments[1].SetValue(gradInput1.DataBuffer);
-            _kernelCatBackward.Arguments[2].SetValue(gradInput2.DataBuffer);
+           
+            {
+                _kernelCatBackward.Arguments[0].SetValue(gradOutput.DataBuffer);
+                _kernelCatBackward.Arguments[1].SetValue(gradInput1.DataBuffer);
+                _kernelCatBackward.Arguments[2].SetValue(gradInput2.DataBuffer);
+            }
             _kernelCatBackward.Arguments[3].SetValue(numRows);
             _kernelCatBackward.Arguments[4].SetValue(dim1);
             _kernelCatBackward.Arguments[5].SetValue(dim2);
@@ -1399,9 +1410,10 @@ namespace cstorchcl.compiler
 
 
             int t = 0;
-            _crossEtnropyForward.Arguments[t++].SetValue(pred.DataBuffer);
-            _crossEtnropyForward.Arguments[t++].SetValue(target.DataBuffer);
-            _crossEtnropyForward.Arguments[t++].SetValue(loss.DataBuffer);
+           
+ _crossEtnropyForward.Arguments[t++].SetValue(pred.DataBuffer);
+                _crossEtnropyForward.Arguments[t++].SetValue(target.DataBuffer);
+                _crossEtnropyForward.Arguments[t++].SetValue(loss.DataBuffer);
             _crossEtnropyForward.Arguments[t++].SetValue(vocabSize);
             _crossEtnropyForward.Arguments[t++].SetValue(numRows);
 
@@ -1430,9 +1442,13 @@ namespace cstorchcl.compiler
             int numRows = pred.Size / vocabSize;
 
             int t = 0;
-            _crossEntropyBackward.Arguments[t++].SetValue(pred.DataBuffer);
-            _crossEntropyBackward.Arguments[t++].SetValue(target.DataBuffer);
-            _crossEntropyBackward.Arguments[t++].SetValue(gradInput.DataBuffer);
+            
+            {
+                _crossEntropyBackward.Arguments[t++].SetValue(pred.DataBuffer);
+                _crossEntropyBackward.Arguments[t++].SetValue(target.DataBuffer);
+                _crossEntropyBackward.Arguments[t++].SetValue(gradInput.DataBuffer);
+            }
+       
             _crossEntropyBackward.Arguments[t++].SetValue(vocabSize);
             _crossEntropyBackward.Arguments[t++].SetValue(numRows);
 
@@ -1481,15 +1497,23 @@ namespace cstorchcl.compiler
 
             CommandQueue activeQueue = DeviceQueueRegistry.GetCurrent();
             int t = 0;
-            _kernelLinearForwardTiled.Arguments[t++].SetValue(x.DataBuffer);
-            _kernelLinearForwardTiled.Arguments[t++].SetValue(w.DataBuffer);
-            _kernelLinearForwardTiled.Arguments[t++].SetValue(bias.DataBuffer);
-            _kernelLinearForwardTiled.Arguments[t++].SetValue(y.DataBuffer);
-            _kernelLinearForwardTiled.Arguments[t++].SetValue(m);
-            _kernelLinearForwardTiled.Arguments[t++].SetValue(k);
-            _kernelLinearForwardTiled.Arguments[t++].SetValue(n);
-            _kernelLinearForwardTiled.Arguments[t++].SetValue(batchStrideX);
-            _kernelLinearForwardTiled.Arguments[t++].SetValue(batchStrideY);
+            //if (_kernelLinearForwardTiled.Arguments.Count == 0)
+           
+                _kernelLinearForwardTiled.Arguments[0].SetValue(x.DataBuffer);
+                _kernelLinearForwardTiled.Arguments[1].SetValue(w.DataBuffer);
+                _kernelLinearForwardTiled.Arguments[2].SetValue(bias.DataBuffer);
+                
+_kernelLinearForwardTiled.Arguments[3].SetValue(y.DataBuffer);
+            _kernelLinearForwardTiled.Arguments[4].SetValue(m);
+            _kernelLinearForwardTiled.Arguments[5].SetValue(k);
+            _kernelLinearForwardTiled.Arguments[6].SetValue(n);
+            _kernelLinearForwardTiled.Arguments[7].SetValue(batchStrideX);
+            _kernelLinearForwardTiled.Arguments[8].SetValue(batchStrideY);
+          
+                
+           
+           
+
 
             activeQueue.EnqueueNDRangeKernel(
                 _kernelLinearForwardTiled,
@@ -1524,8 +1548,12 @@ namespace cstorchcl.compiler
             CommandQueue activeQueue = DeviceQueueRegistry.GetCurrent();
 
             int t = 0;
-            _kernelLinearBiasBackward.Arguments[t++].SetValue(gradOutput.DataBuffer);
-            _kernelLinearBiasBackward.Arguments[t++].SetValue(gradBias.DataBuffer);
+           
+            {
+                _kernelLinearBiasBackward.Arguments[t++].SetValue(gradOutput.DataBuffer);
+                _kernelLinearBiasBackward.Arguments[t++].SetValue(gradBias.DataBuffer);
+            }
+            
             _kernelLinearBiasBackward.Arguments[t++].SetValue(totalRows);
             _kernelLinearBiasBackward.Arguments[t++].SetValue(n);
 
@@ -1589,7 +1617,12 @@ namespace cstorchcl.compiler
             // 3. Настраиваем 2D-сетку потоков [outerSize, innerSize]
             IntPtr[] globalSize = { (IntPtr)outerSize, (IntPtr)innerSize };
             CommandQueue activeQueue = DeviceQueueRegistry.GetCurrent();
-
+            int lX = 16, lY = 16;
+            while (outerSize % lX > 0)
+                lX--;
+            while (innerSize % lY > 0)
+                lY--;
+            IntPtr[] loc = { (IntPtr)lX, (IntPtr)lY };
             int t = 0;
             _kernelReduceSumAxis.Arguments[t++].SetValue(x.DataBuffer);
             _kernelReduceSumAxis.Arguments[t++].SetValue(y.DataBuffer);
@@ -1598,7 +1631,7 @@ namespace cstorchcl.compiler
             _kernelReduceSumAxis.Arguments[t++].SetValue(innerSize);
 
             // Передаем null в качестве localWorkSize, чтобы драйвер OpenCL сам оптимально разбил сетку
-            activeQueue.EnqueueNDRangeKernel(_kernelReduceSumAxis, globalSize, null);
+            activeQueue.EnqueueNDRangeKernel(_kernelReduceSumAxis, globalSize,loc );
             //activeQueue.Finish();
 
             if (y.RequiresGrad)
@@ -1666,11 +1699,14 @@ namespace cstorchcl.compiler
             int batchStrideB = (b.Shape[0] == 1) ? 0 : (b.Shape[1] * b.Shape[2]);
             int batchStrideC = m * n;
 
-            int gx = (int)Math.Ceiling(n / 16.0) * 16;
-            int gy = (int)Math.Ceiling(m / 16.0) * 16;
+            // Одна рабочая группа (16x16 потоков) обрабатывает тайл 64x64
+            const int TS = 16;
+            const int TILE_DIM = 64; // TS * 4
+
+            int gx = ((n + TILE_DIM - 1) / TILE_DIM) * TS;
+            int gy = ((m + TILE_DIM - 1) / TILE_DIM) * TS;
 
             CommandQueue activeQueue = DeviceQueueRegistry.GetCurrent();
-
             int t = 0;
             _kernelBmmPermuteTiled.Arguments[t++].SetValue(a.DataBuffer);
             _kernelBmmPermuteTiled.Arguments[t++].SetValue(b.DataBuffer);
@@ -1686,14 +1722,13 @@ namespace cstorchcl.compiler
 
             activeQueue.EnqueueNDRangeKernel(
                 _kernelBmmPermuteTiled,
-                
                 new[] { new IntPtr(gx), new IntPtr(gy), new IntPtr(batch) },
-                new[] { new IntPtr(16), new IntPtr(16), new IntPtr(1) }
+                new[] { new IntPtr(TS), new IntPtr(TS), new IntPtr(1) }
             );
-            //activeQueue.Finish();
 
             return c;
         }
+
         private Kernel _kernelBmmPermuteTiled;
         #endregion
     }

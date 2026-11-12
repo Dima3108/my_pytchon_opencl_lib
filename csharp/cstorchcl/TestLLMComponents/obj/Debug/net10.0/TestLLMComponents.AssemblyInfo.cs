@@ -14,7 +14,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("TestLLMComponents")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Debug")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+6161c667c727d77d76b2583f9b1a40e53d22cbac")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+4bb41371da642b6c4a05f6974ff723ef73d1e48b")]
 [assembly: System.Reflection.AssemblyProductAttribute("TestLLMComponents")]
 [assembly: System.Reflection.AssemblyTitleAttribute("TestLLMComponents")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]
