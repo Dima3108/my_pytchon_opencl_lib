@@ -71,7 +71,9 @@ namespace cstorchcl.tests
             Console.WriteLine("----------------------------------------------------------------");
             var encInputBuf = context.CreateBuffer(MemoryFlags.ReadOnly, sizeof(int) * blockTokens * batchSize);
             var decTargetBuf= context.CreateBuffer(MemoryFlags.ReadOnly, sizeof(int) * blockTokens * batchSize);
-            for (int batchIdx = 0; batchIdx < 10; batchIdx++)
+            int BATCH_COUNT = 7;
+            double sred_inter = 0;
+            for (int batchIdx = 0; batchIdx < BATCH_COUNT; batchIdx++)
             {
                 Stopwatch batchTimer = Stopwatch.StartNew();
 
@@ -85,7 +87,13 @@ namespace cstorchcl.tests
 
                 // Прямой проход сети — получаем полные логиты [Batch, SeqLen, VocabSize]
                 Tensor logits = model.Forward(encInputBuf, decTargetBuf, embeddingWeightsEncoder, embeddingWeightsDecoder, blockTokens, batchSize);
-
+#if DEBUG
+               // HostReturner.PrintTensor(logits, "логиты полученные из модели", true);
+                /*HostReturner.PrintTensor(model.EncoderLstm.WeightU, "enocderU", true);
+                HostReturner.PrintTensor(model.EncoderLstm.WeightW, "enocderW", true);
+                HostReturner.PrintTensor(model.DecoderLstm.WeightU, "decoderU", true);
+                HostReturner.PrintTensor(model.EncoderLstm.WeightW, "decoderW", true);*/
+#endif
                 // Подготавливаем One-Hot мишень со сдвигом [Batch, SeqLen - 1, VocabSize] на основе первого ядра
                 Tensor trueLossTarget = clGlob.PrepareTrueTargets(decTargetBuf, batchSize, blockTokens, vocabSize);
 
@@ -93,10 +101,10 @@ namespace cstorchcl.tests
                 Tensor slicedLogits = clGlob.SliceLogitsForLoss(logits,computeCtx);
 
                 // Считаем честную ошибку между усеченными логитами и One-Hot таргетом
-                Console.WriteLine("тензор slicedLogits");
+                /*Console.WriteLine("тензор slicedLogits");
                 HostReturner.PrintTensor(slicedLogits);
                 Console.WriteLine("тензор trueLossTarget");
-                HostReturner.PrintTensor(trueLossTarget);
+                HostReturner.PrintTensor(trueLossTarget);*/
                 Tensor loss = clGlob.CrossEntropyLoss(slicedLogits, trueLossTarget);
 
                 // ... [Backward и очистка памяти] ...
@@ -113,19 +121,28 @@ namespace cstorchcl.tests
                 AutoGrad.Backward(loss, context);
                 optimizer.Step();
 
-                // Очистка ресурсов шага
-               // encInputBuf.Dispose();
-                //decTargetBuf.Dispose();
-                //mockLossTarget.Dispose();
 
                 batchTimer.Stop();
                 long totalTokensProcessed = (long)batchSize * blockTokens;
                 double tokensPerSecond = totalTokensProcessed / batchTimer.Elapsed.TotalSeconds;
-
-                Console.WriteLine($"Батч {batchIdx + 1:D2}/10 | MSE Loss: {lossValue[0]:F6} | Скорость: {tokensPerSecond:F0} токенов/сек");
+                if (batchIdx >= 3)
+                {
+                    sred_inter += batchTimer.Elapsed.TotalSeconds;
+                }
+#if DEBUG
+              /*  HostReturner.PrintTensor(model.EncoderLstm.WeightU, "enocderU", true);
+                HostReturner.PrintTensor(model.EncoderLstm.WeightW, "enocderW", true);
+                HostReturner.PrintTensor(model.DecoderLstm.WeightU, "decoderU", true);
+                HostReturner.PrintTensor(model.EncoderLstm.WeightW, "decoderW", true);*/
+               // HostReturner.PrintTensor(model.FullyConnectedOut.Weight, "LinearWeigth", true);
+#endif
+                Console.WriteLine($"Батч {batchIdx + 1:D2}/{BATCH_COUNT} | MSE Loss: {lossValue[0]:F6} | Скорость: {tokensPerSecond:F0} токенов/сек({1/batchTimer.Elapsed.TotalSeconds} it/s)");
             }
+            sred_inter /= BATCH_COUNT - 3;
             encInputBuf.Dispose();
             decTargetBuf.Dispose();
+            Console.WriteLine("----------------------------------------------------------------");
+            Console.WriteLine($"средняя скорость обработки:{1/sred_inter} it/s");
             Console.WriteLine("----------------------------------------------------------------");
             Console.WriteLine("Эксперимент успешно выполнен!");
         }

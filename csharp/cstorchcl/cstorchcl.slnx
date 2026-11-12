@@ -1,5 +1,11 @@
 <Solution>
-  <Project Path="ActivationTest/ActivationTest.csproj" Id="f028f1b3-988e-476a-900f-2ff06f8991d1" />
+  <Configurations>
+    <Platform Name="Any CPU" />
+    <Platform Name="x64" />
+  </Configurations>
+  <Project Path="ActivationTest/ActivationTest.csproj" Id="f028f1b3-988e-476a-900f-2ff06f8991d1">
+    <Platform Solution="*|x64" Project="x64" />
+  </Project>
   <Project Path="AdamTest/AdamTest.csproj" Id="a05d804b-0359-4c7c-a992-24a96c57fd47" />
   <Project Path="cstorchcl/cstorchcl.csproj" />
   <Project Path="LocalBecnhmark/LocalBecnhmark.csproj" Id="3c08da65-9802-4c66-bf82-7e52b7402b82" />

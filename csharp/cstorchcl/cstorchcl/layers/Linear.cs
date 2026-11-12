@@ -87,26 +87,8 @@ queue.EnqueueWriteBuffer(Bias.DataBuffer, true, 0, biasBytes, (IntPtr)hb);
                 throw new ArgumentException($"Несоответствие размерностей входа. Ожидалось {_inFeatures} признаков, получено {x.Shape[x.Shape.Length - 1]}.");
             }
 
-            // ШАГ 1 (ГЛОБАЛЬНЫЙ): Тяжелое матричное умножение X x W на GPU
-            // Выход projected получит форму [Batch, M, OutFeatures]
-            Tensor projected = NnClGlob.Bmm(x, Weight);
-
-            // ШАГ 2 (ЛОКАЛЬНЫЙ JIT): Сплавление операции прибавления Bias на регистрах GPU.
-            // Передаем projected и bias в наш Roslyn-компонент
-            var tensorArgs = new Dictionary<string, Tensor> {
-                { "P", projected },
-                { "b", Bias }
-            };
-
-            // Математический псевдокод для JIT. 
-            // Благодаря нашему модулю Broadcasting, вектор 'b' автоматически прибавится к каждой строке матрицы 'P'!
-            string pseudoCode = "P = P + b;";
-
-            // Вызываем RunLocal, который вернет НОВЫЙ чистый тензор без затирания графа Autograd
-            Dictionary<string, Tensor> localOutputs = NnClGlob.RunLocal(pseudoCode, tensorArgs, constants: null);
-            Tensor output = localOutputs["P"];
-
-            return output;
+            // Единый монолитный вызов без промежуточных аллокаций и JIT-компиляции
+            return NnClGlob.LinearForward(x, Weight, Bias);
         }
     }
 }

@@ -40,7 +40,9 @@ namespace TestLSTMRealTrain
             nativeBuffer = Marshal.AllocCoTaskMem(batchSize * _elementBytes);
             encHostPtr = Marshal.AllocCoTaskMem(sizeof(int) * blockTokens*batchSize);
             decHostPtr= Marshal.AllocCoTaskMem(sizeof(int) * blockTokens * batchSize);
+            fs = new FileStream(_filePath, FileMode.Open, FileAccess.Read, FileShare.Read);
         }
+        private FileStream fs;
         private IntPtr encHostPtr, decHostPtr, nativeBuffer;
             /// <summary>
             /// Извлекает батч данных из файла с помощью нативной памяти и возвращает неуправляемые буферы токенов.
@@ -59,9 +61,9 @@ namespace TestLSTMRealTrain
 
                 try
                 {
-                    using (var fs = new FileStream(_filePath, FileMode.Open, FileAccess.Read, FileShare.Read))
+                   // using (var fs = new FileStream(_filePath, FileMode.Open, FileAccess.Read, FileShare.Read))
                     {
-                        fs.Seek(byteOffset, SeekOrigin.Begin);
+                       // fs.Seek(byteOffset, SeekOrigin.Begin);
 
                         // Безопасное чтение из потока в нативный указатель через Span
                         unsafe
@@ -128,6 +130,7 @@ namespace TestLSTMRealTrain
             Marshal.FreeCoTaskMem(nativeBuffer);
             Marshal.FreeCoTaskMem(decHostPtr);
             Marshal.FreeCoTaskMem(encHostPtr);
+            fs.Close();
         }
         }
     }

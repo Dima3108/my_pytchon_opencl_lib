@@ -42,13 +42,13 @@ class Program
             using var linearLayer = new Linear(computeContext, nnClGlob, inFeatures, outFeatures);
 
             // Передаем параметры слоя в оптимизатор SGD
-            var optimizer = new SGD(linearLayer.GetParameters(), learningRate: 0.2f, computeContext);
+            var optimizer = new SGD(linearLayer.GetParameters(), learningRate: 0.05f, computeContext);
 
             Console.WriteLine("\n--- Выполнение шага обучения слоя Linear ---");
             for (int epoch = 0; epoch < 10; epoch++)
             {
                 Console.WriteLine($"эпоха {epoch+1}!");
-                GradientStorage.Clear();
+               // GradientStorage.Clear();
                 linearLayer.ZeroGrad(); // Сбрасываем старые буферы градиентов параметров
 
                 // А. Прямой проход слоя (BMM + JIT Bias)

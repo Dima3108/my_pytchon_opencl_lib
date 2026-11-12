@@ -127,7 +127,10 @@ namespace cstorchcl.optimizers
 
                 // Запуск одномерной сетки потоков по размеру тензора
                 IntPtr globalSize = new IntPtr(size);
-                queue.EnqueueNDRangeKernel(_adamKernel, new[] { globalSize }, null);
+                int l = 16;
+                while (size % l != 0)
+                    l--;
+                queue.EnqueueNDRangeKernel(_adamKernel, new[] { globalSize }, new[] { (IntPtr)l });
             }
 
             // Дожидаемся завершения применения шага оптимизатора ко всем параметрам на GPU

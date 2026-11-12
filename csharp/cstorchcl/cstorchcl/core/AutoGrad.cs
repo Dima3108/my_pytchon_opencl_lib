@@ -110,7 +110,8 @@ HostReturner.PrintTensor(input, "sum_grad", true);
                 }
             }
         }
-
+        private static NOpenCL.Program prg = null;
+        private static NOpenCL.Kernel kernel = null;
         /// <summary>
         /// Физически суммирует градиенты на GPU во VRAM.
         /// Реализует операцию: targetGrad += newGrad
@@ -130,14 +131,21 @@ HostReturner.PrintTensor(input, "sum_grad", true);
             var queue = DeviceQueueRegistry.GetCurrent();
 
             // Компилируем легкое ядро аккумуляции
-            var prg = compiler.JITProgramCache.GetOrCompile(queue.Context, queue.Device, kernelSource);
-            using var kernel = prg.CreateKernel("accum_grad");
+            if (prg == null)
+            {
+                prg = compiler.JITProgramCache.GetOrCompile(queue.Context,queue.Device , kernelSource);
+                kernel = prg.CreateKernel("accum_grad");
+            }
+           // var prg = compiler.JITProgramCache.GetOrCompile(queue.Context, queue.Device, kernelSource);
+          //  using var kernel = prg.CreateKernel("accum_grad");
 
             kernel.Arguments[0].SetValue(targetGrad.DataBuffer);
             kernel.Arguments[1].SetValue(newGrad.DataBuffer);
-
+            int lc = 32;
+            while (targetGrad.Size % lc > 0)
+                lc--;
             // Запускаем параллельное сложение по всей длине буфера градиента
-            queue.EnqueueNDRangeKernel(kernel,  new[] { new IntPtr(targetGrad.Size) }, null);
+            queue.EnqueueNDRangeKernel(kernel, new[] { new IntPtr(targetGrad.Size) }, new[] { (IntPtr)lc });
             queue.Finish();
         }
 

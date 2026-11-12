@@ -65,7 +65,7 @@ namespace cstorchcl.core
 
             // Запускаем монолитное Си-ядро обратного прохода LSTM (BPTT)
             // Оно вернет gradX и атомарно внутри VRAM обновит буферы weightW.Grad и weightU.Grad
-            Tensor gradX = _nnClGlob.LstmBackward(gradOutput, x, weightW, weightU, Output, _workspaceBuf);
+            Tensor gradX = _nnClGlob.LstmBackward(gradOutput, x, weightW, weightU,bias, Output, _workspaceBuf);
 
             // Освобождаем промежуточный буфер гейтов сразу после вычисления градиентов.
             // Он больше не понадобится в текущей эпохе обучения.

@@ -14,7 +14,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("ActivationTest")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Debug")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+0bdd98cd64585082c30c30e9f0295709d9eab8c8")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+6161c667c727d77d76b2583f9b1a40e53d22cbac")]
 [assembly: System.Reflection.AssemblyProductAttribute("ActivationTest")]
 [assembly: System.Reflection.AssemblyTitleAttribute("ActivationTest")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]
