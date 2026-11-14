@@ -16,6 +16,7 @@ namespace cstorchcl.tests
             Console.WriteLine("=== ЗАПУСК КОРРЕКТНОГО ТЕСТА ENCODER-DECODER ===");
 
             string datasetPath = @"C:\LLModels\Gemma4_E2B\fulldataset.bin";
+            datasetPath = "fulldataset.bin";
             int vocabSize = 6565;
             int encoderHiddenDim = 500;
             int batchSize = 8;

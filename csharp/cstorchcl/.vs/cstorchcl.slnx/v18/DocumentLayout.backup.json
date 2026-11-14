@@ -11,16 +11,12 @@
       "RelativeMoniker": "D:0:0:{F61D2565-0EF3-67F1-D4EA-C2E6E5B22617}|cstorchcl\\cstorchcl.csproj|solutionrelative:cstorchcl\\core\\sparsecrossentropyop.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}"
     },
     {
-      "AbsoluteMoniker": "D:0:0:{391C592E-C414-4E55-803B-934A333041A5}|TestLSTMRealTrain\\TestLSTMRealTrain.csproj|c:\\users\\\u0434\u043C\u0438\u0442\u0440\u0438\u0439\\github_repo\\my_pytchon_opencl_lib\\csharp\\cstorchcl\\testlstmrealtrain\\program.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}",
-      "RelativeMoniker": "D:0:0:{391C592E-C414-4E55-803B-934A333041A5}|TestLSTMRealTrain\\TestLSTMRealTrain.csproj|solutionrelative:testlstmrealtrain\\program.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}"
-    },
-    {
-      "AbsoluteMoniker": "D:0:0:{F61D2565-0EF3-67F1-D4EA-C2E6E5B22617}|cstorchcl\\cstorchcl.csproj|c:\\users\\\u0434\u043C\u0438\u0442\u0440\u0438\u0439\\github_repo\\my_pytchon_opencl_lib\\csharp\\cstorchcl\\cstorchcl\\cl_kernels\\slice_logits_3d.cl||{8B382828-6202-11D1-8870-0000F87579D2}",
-      "RelativeMoniker": "D:0:0:{F61D2565-0EF3-67F1-D4EA-C2E6E5B22617}|cstorchcl\\cstorchcl.csproj|solutionrelative:cstorchcl\\cl_kernels\\slice_logits_3d.cl||{8B382828-6202-11D1-8870-0000F87579D2}"
-    },
-    {
       "AbsoluteMoniker": "D:0:0:{F61D2565-0EF3-67F1-D4EA-C2E6E5B22617}|cstorchcl\\cstorchcl.csproj|c:\\users\\\u0434\u043C\u0438\u0442\u0440\u0438\u0439\\github_repo\\my_pytchon_opencl_lib\\csharp\\cstorchcl\\cstorchcl\\core\\computecontext.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}",
       "RelativeMoniker": "D:0:0:{F61D2565-0EF3-67F1-D4EA-C2E6E5B22617}|cstorchcl\\cstorchcl.csproj|solutionrelative:cstorchcl\\core\\computecontext.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}"
+    },
+    {
+      "AbsoluteMoniker": "D:0:0:{391C592E-C414-4E55-803B-934A333041A5}|TestLSTMRealTrain\\TestLSTMRealTrain.csproj|c:\\users\\\u0434\u043C\u0438\u0442\u0440\u0438\u0439\\github_repo\\my_pytchon_opencl_lib\\csharp\\cstorchcl\\testlstmrealtrain\\program.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}",
+      "RelativeMoniker": "D:0:0:{391C592E-C414-4E55-803B-934A333041A5}|TestLSTMRealTrain\\TestLSTMRealTrain.csproj|solutionrelative:testlstmrealtrain\\program.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}"
     },
     {
       "AbsoluteMoniker": "D:0:0:{391C592E-C414-4E55-803B-934A333041A5}|TestLSTMRealTrain\\TestLSTMRealTrain.csproj|c:\\users\\\u0434\u043C\u0438\u0442\u0440\u0438\u0439\\github_repo\\my_pytchon_opencl_lib\\csharp\\cstorchcl\\testlstmrealtrain\\streamdataloader.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}",
@@ -39,10 +35,6 @@
       "RelativeMoniker": "D:0:0:{391C592E-C414-4E55-803B-934A333041A5}|TestLSTMRealTrain\\TestLSTMRealTrain.csproj|solutionrelative:testlstmrealtrain\\encoderdecoder.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}"
     },
     {
-      "AbsoluteMoniker": "D:0:0:{F61D2565-0EF3-67F1-D4EA-C2E6E5B22617}|cstorchcl\\cstorchcl.csproj|c:\\users\\\u0434\u043C\u0438\u0442\u0440\u0438\u0439\\github_repo\\my_pytchon_opencl_lib\\csharp\\cstorchcl\\cstorchcl\\core\\tensor.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}",
-      "RelativeMoniker": "D:0:0:{F61D2565-0EF3-67F1-D4EA-C2E6E5B22617}|cstorchcl\\cstorchcl.csproj|solutionrelative:cstorchcl\\core\\tensor.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}"
-    },
-    {
       "AbsoluteMoniker": "D:0:0:{F61D2565-0EF3-67F1-D4EA-C2E6E5B22617}|cstorchcl\\cstorchcl.csproj|c:\\users\\\u0434\u043C\u0438\u0442\u0440\u0438\u0439\\github_repo\\my_pytchon_opencl_lib\\csharp\\cstorchcl\\cstorchcl\\core\\autograd.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}",
       "RelativeMoniker": "D:0:0:{F61D2565-0EF3-67F1-D4EA-C2E6E5B22617}|cstorchcl\\cstorchcl.csproj|solutionrelative:cstorchcl\\core\\autograd.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}"
     }
@@ -54,7 +46,7 @@
       "DocumentGroups": [
         {
           "DockedWidth": 200,
-          "SelectedChildIndex": 2,
+          "SelectedChildIndex": 1,
           "Children": [
             {
               "$type": "Document",
@@ -64,22 +56,9 @@
               "RelativeDocumentMoniker": "cstorchcl\\core\\SparseCrossEntropyOp.cs",
               "ToolTip": "C:\\Users\\\u0414\u043C\u0438\u0442\u0440\u0438\u0439\\github_repo\\my_pytchon_opencl_lib\\csharp\\cstorchcl\\cstorchcl\\core\\SparseCrossEntropyOp.cs",
               "RelativeToolTip": "cstorchcl\\core\\SparseCrossEntropyOp.cs",
-              "ViewState": "AgIAAAgAAAAAAAAAAAAawBcAAABaAAAAAAAAAA==",
+              "ViewState": "AgIAAAgAAAAAAAAAAIA1wBcAAABaAAAAAAAAAA==",
               "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000738|",
               "WhenOpened": "2026-11-14T10:24:04.209Z",
-              "EditorCaption": ""
-            },
-            {
-              "$type": "Document",
-              "DocumentIndex": 3,
-              "Title": "slice_logits_3d.cl",
-              "DocumentMoniker": "C:\\Users\\\u0414\u043C\u0438\u0442\u0440\u0438\u0439\\github_repo\\my_pytchon_opencl_lib\\csharp\\cstorchcl\\cstorchcl\\cl_kernels\\slice_logits_3d.cl",
-              "RelativeDocumentMoniker": "cstorchcl\\cl_kernels\\slice_logits_3d.cl",
-              "ToolTip": "C:\\Users\\\u0414\u043C\u0438\u0442\u0440\u0438\u0439\\github_repo\\my_pytchon_opencl_lib\\csharp\\cstorchcl\\cstorchcl\\cl_kernels\\slice_logits_3d.cl",
-              "RelativeToolTip": "cstorchcl\\cl_kernels\\slice_logits_3d.cl",
-              "ViewState": "AgIAAAAAAAAAAAAAAAAAABgAAAAAAAAAAAAAAA==",
-              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.001001|",
-              "WhenOpened": "2026-11-14T10:07:49.177Z",
               "EditorCaption": ""
             },
             {
@@ -88,29 +67,29 @@
               "Title": "NnClGlob.cs",
               "DocumentMoniker": "C:\\Users\\\u0414\u043C\u0438\u0442\u0440\u0438\u0439\\github_repo\\my_pytchon_opencl_lib\\csharp\\cstorchcl\\cstorchcl\\compiler\\NnClGlob.cs",
               "RelativeDocumentMoniker": "cstorchcl\\compiler\\NnClGlob.cs",
-              "ToolTip": "C:\\Users\\\u0414\u043C\u0438\u0442\u0440\u0438\u0439\\github_repo\\my_pytchon_opencl_lib\\csharp\\cstorchcl\\cstorchcl\\compiler\\NnClGlob.cs",
-              "RelativeToolTip": "cstorchcl\\compiler\\NnClGlob.cs",
-              "ViewState": "AgIAAI4AAAAAAAAAAAAywJcAAABUAAAAAAAAAA==",
+              "ToolTip": "C:\\Users\\\u0414\u043C\u0438\u0442\u0440\u0438\u0439\\github_repo\\my_pytchon_opencl_lib\\csharp\\cstorchcl\\cstorchcl\\compiler\\NnClGlob.cs*",
+              "RelativeToolTip": "cstorchcl\\compiler\\NnClGlob.cs*",
+              "ViewState": "AgIAAIcDAAAAAAAAAAAzwJQDAAAOAAAAAAAAAA==",
               "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000738|",
               "WhenOpened": "2026-11-14T10:03:01.188Z",
               "EditorCaption": ""
             },
             {
               "$type": "Document",
-              "DocumentIndex": 4,
+              "DocumentIndex": 2,
               "Title": "ComputeContext.cs",
               "DocumentMoniker": "C:\\Users\\\u0414\u043C\u0438\u0442\u0440\u0438\u0439\\github_repo\\my_pytchon_opencl_lib\\csharp\\cstorchcl\\cstorchcl\\core\\ComputeContext.cs",
               "RelativeDocumentMoniker": "cstorchcl\\core\\ComputeContext.cs",
               "ToolTip": "C:\\Users\\\u0414\u043C\u0438\u0442\u0440\u0438\u0439\\github_repo\\my_pytchon_opencl_lib\\csharp\\cstorchcl\\cstorchcl\\core\\ComputeContext.cs",
               "RelativeToolTip": "cstorchcl\\core\\ComputeContext.cs",
-              "ViewState": "AgIAABkAAAAAAAAAAIBGwAAAAAAAAAAAAAAAAA==",
+              "ViewState": "AgIAAHMAAAAAAAAAAAAuwHQAAAANAAAAAAAAAA==",
               "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000738|",
               "WhenOpened": "2026-11-14T09:32:10.494Z",
               "EditorCaption": ""
             },
             {
               "$type": "Document",
-              "DocumentIndex": 8,
+              "DocumentIndex": 7,
               "Title": "EncoderDecoder.cs",
               "DocumentMoniker": "C:\\Users\\\u0414\u043C\u0438\u0442\u0440\u0438\u0439\\github_repo\\my_pytchon_opencl_lib\\csharp\\cstorchcl\\TestLSTMRealTrain\\EncoderDecoder.cs",
               "RelativeDocumentMoniker": "TestLSTMRealTrain\\EncoderDecoder.cs",
@@ -118,25 +97,11 @@
               "RelativeToolTip": "TestLSTMRealTrain\\EncoderDecoder.cs",
               "ViewState": "AgIAABUAAAAAAAAAAAAiwBwAAAAmAAAAAAAAAA==",
               "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000738|",
-              "WhenOpened": "2026-11-14T09:15:05.71Z",
-              "EditorCaption": ""
+              "WhenOpened": "2026-11-14T09:15:05.71Z"
             },
             {
               "$type": "Document",
-              "DocumentIndex": 9,
-              "Title": "Tensor.cs",
-              "DocumentMoniker": "C:\\Users\\\u0414\u043C\u0438\u0442\u0440\u0438\u0439\\github_repo\\my_pytchon_opencl_lib\\csharp\\cstorchcl\\cstorchcl\\core\\Tensor.cs",
-              "RelativeDocumentMoniker": "cstorchcl\\core\\Tensor.cs",
-              "ToolTip": "C:\\Users\\\u0414\u043C\u0438\u0442\u0440\u0438\u0439\\github_repo\\my_pytchon_opencl_lib\\csharp\\cstorchcl\\cstorchcl\\core\\Tensor.cs",
-              "RelativeToolTip": "cstorchcl\\core\\Tensor.cs",
-              "ViewState": "AgIAABQBAAAAAAAAAAA7wAAAAAAAAAAAAAAAAA==",
-              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000738|",
-              "WhenOpened": "2026-11-14T08:39:00.087Z",
-              "EditorCaption": ""
-            },
-            {
-              "$type": "Document",
-              "DocumentIndex": 10,
+              "DocumentIndex": 8,
               "Title": "AutoGrad.cs",
               "DocumentMoniker": "C:\\Users\\\u0414\u043C\u0438\u0442\u0440\u0438\u0439\\github_repo\\my_pytchon_opencl_lib\\csharp\\cstorchcl\\cstorchcl\\core\\AutoGrad.cs",
               "RelativeDocumentMoniker": "cstorchcl\\core\\AutoGrad.cs",
@@ -144,38 +109,37 @@
               "RelativeToolTip": "cstorchcl\\core\\AutoGrad.cs",
               "ViewState": "AgIAANYAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==",
               "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000738|",
-              "WhenOpened": "2026-11-14T08:38:40.331Z",
-              "EditorCaption": ""
+              "WhenOpened": "2026-11-14T08:38:40.331Z"
             },
             {
               "$type": "Document",
-              "DocumentIndex": 5,
+              "DocumentIndex": 4,
               "Title": "StreamDataLoader.cs",
               "DocumentMoniker": "C:\\Users\\\u0414\u043C\u0438\u0442\u0440\u0438\u0439\\github_repo\\my_pytchon_opencl_lib\\csharp\\cstorchcl\\TestLSTMRealTrain\\StreamDataLoader.cs",
               "RelativeDocumentMoniker": "TestLSTMRealTrain\\StreamDataLoader.cs",
               "ToolTip": "C:\\Users\\\u0414\u043C\u0438\u0442\u0440\u0438\u0439\\github_repo\\my_pytchon_opencl_lib\\csharp\\cstorchcl\\TestLSTMRealTrain\\StreamDataLoader.cs",
               "RelativeToolTip": "TestLSTMRealTrain\\StreamDataLoader.cs",
-              "ViewState": "AgIAAEAAAAAAAAAAAAA5wEkAAABJAAAAAAAAAA==",
+              "ViewState": "AgIAABsAAAAAAAAAAIBCwCEAAAAAAAAAAAAAAA==",
               "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000738|",
               "WhenOpened": "2026-11-14T08:38:07.54Z",
               "EditorCaption": ""
             },
             {
               "$type": "Document",
-              "DocumentIndex": 2,
+              "DocumentIndex": 3,
               "Title": "Program.cs",
               "DocumentMoniker": "C:\\Users\\\u0414\u043C\u0438\u0442\u0440\u0438\u0439\\github_repo\\my_pytchon_opencl_lib\\csharp\\cstorchcl\\TestLSTMRealTrain\\Program.cs",
               "RelativeDocumentMoniker": "TestLSTMRealTrain\\Program.cs",
               "ToolTip": "C:\\Users\\\u0414\u043C\u0438\u0442\u0440\u0438\u0439\\github_repo\\my_pytchon_opencl_lib\\csharp\\cstorchcl\\TestLSTMRealTrain\\Program.cs",
               "RelativeToolTip": "TestLSTMRealTrain\\Program.cs",
-              "ViewState": "AgIAAE0AAAAAAAAAAIA+wGYAAABSAAAAAAAAAA==",
+              "ViewState": "AgIAAAMAAAAAAAAAAIA7wBIAAAAjAAAAAAAAAA==",
               "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000738|",
               "WhenOpened": "2026-11-14T07:59:53.392Z",
               "EditorCaption": ""
             },
             {
               "$type": "Document",
-              "DocumentIndex": 7,
+              "DocumentIndex": 6,
               "Title": "OpenCLBufferManager.cs",
               "DocumentMoniker": "C:\\Users\\\u0414\u043C\u0438\u0442\u0440\u0438\u0439\\github_repo\\my_pytchon_opencl_lib\\csharp\\cstorchcl\\cstorchcl\\compiler\\OpenCLBufferManager.cs",
               "RelativeDocumentMoniker": "cstorchcl\\compiler\\OpenCLBufferManager.cs",
@@ -183,12 +147,11 @@
               "RelativeToolTip": "cstorchcl\\compiler\\OpenCLBufferManager.cs",
               "ViewState": "AgIAAA4AAAAAAAAAAAAIwCUAAAAXAAAAAAAAAA==",
               "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000738|",
-              "WhenOpened": "2026-11-14T07:46:31.616Z",
-              "EditorCaption": ""
+              "WhenOpened": "2026-11-14T07:46:31.616Z"
             },
             {
               "$type": "Document",
-              "DocumentIndex": 6,
+              "DocumentIndex": 5,
               "Title": "Adam.cs",
               "DocumentMoniker": "C:\\Users\\\u0414\u043C\u0438\u0442\u0440\u0438\u0439\\github_repo\\my_pytchon_opencl_lib\\csharp\\cstorchcl\\cstorchcl\\core\\Adam.cs",
               "RelativeDocumentMoniker": "cstorchcl\\core\\Adam.cs",
@@ -196,8 +159,7 @@
               "RelativeToolTip": "cstorchcl\\core\\Adam.cs",
               "ViewState": "AgIAAG0AAAAAAAAAAAA6wIMAAABDAAAAAAAAAA==",
               "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000738|",
-              "WhenOpened": "2026-11-13T18:08:01.629Z",
-              "EditorCaption": ""
+              "WhenOpened": "2026-11-13T18:08:01.629Z"
             }
           ]
         }

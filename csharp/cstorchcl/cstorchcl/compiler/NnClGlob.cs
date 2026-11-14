@@ -685,8 +685,9 @@ namespace cstorchcl.compiler
             CommandQueue activeQueue = DeviceQueueRegistry.GetCurrent();
 
             // Выравниваем сетку под локальную группу [64, 4] = 256 потоков (работает на любом GPU)
-            const int WG_X = 64;
-            const int WG_Y = 4;
+             int WG_X = (int)Math.Sqrt(_computeCtx.MAX_WORK_GROUP_SIZE);
+             int WG_Y = (int)Math.Sqrt(_computeCtx.MAX_WORK_GROUP_SIZE);
+
             int globalX = ((embeddingDim + WG_X - 1) / WG_X) * WG_X;
             int globalY = ((vocabSize + WG_Y - 1) / WG_Y) * WG_Y;
 
@@ -913,17 +914,21 @@ namespace cstorchcl.compiler
             _kernelLstmRecurrentForward.Arguments[argIdx2++].SetValue(u.DataBuffer);
             _kernelLstmRecurrentForward.Arguments[argIdx2++].SetValue(hOut.DataBuffer);
             _kernelLstmRecurrentForward.Arguments[argIdx2++].SetValue(workspace);
-            _kernelLstmRecurrentForward.Arguments[argIdx2++].SetValue(cCurrBuf);
-            _kernelLstmRecurrentForward.Arguments[argIdx2++].SetValue(hCurrBuf);
+            //_kernelLstmRecurrentForward.Arguments[argIdx2++].SetValue(cCurrBuf);
+            //_kernelLstmRecurrentForward.Arguments[argIdx2++].SetValue(hCurrBuf);
             _kernelLstmRecurrentForward.Arguments[argIdx2++].SetValue(batchSize);
             _kernelLstmRecurrentForward.Arguments[argIdx2++].SetValue(seqLen);
             _kernelLstmRecurrentForward.Arguments[argIdx2++].SetValue(hiddenSize);
 
+             maxWg = (int)_computeCtx.MAX_WORK_GROUP_SIZE;
+            int wgSizeX = Math.Min(maxWg, ((hiddenSize + 31) / 32) * 32);
+
             activeQueue.EnqueueNDRangeKernel(
                 _kernelLstmRecurrentForward,
-                new IntPtr[] { (IntPtr)batchSize, (IntPtr)wgSizeY },
-                new nint[] { (IntPtr)1, (IntPtr)wgSizeY }
+                new IntPtr[] { (IntPtr)wgSizeX, (IntPtr)1, (IntPtr)batchSize },
+                new nint[] { (IntPtr)wgSizeX, (IntPtr)1, (IntPtr)1 }
             );
+
             //activeQueue.Finish();
 
             // Примечание: Creator привязывается в LSTM.Forward, здесь дублировать не нужно, если вызывается оттуда.
@@ -1319,11 +1324,8 @@ namespace cstorchcl.compiler
         {
             int targetDim = dim == -1 ? x1.Shape.Length - 1 : dim;
             if (targetDim != x1.Shape.Length - 1)
-            {
                 throw new NotSupportedException("Текущая реализация Cat поддерживает конкатенацию только по последней оси.");
-            }
 
-            // Проверяем, что все размерности кроме последней совпадают
             for (int i = 0; i < x1.Shape.Length - 1; i++)
             {
                 if (x1.Shape[i] != x2.Shape[i])
@@ -1333,25 +1335,22 @@ namespace cstorchcl.compiler
             int dim1 = x1.Shape[x1.Shape.Length - 1];
             int dim2 = x2.Shape[x2.Shape.Length - 1];
             int outDim = dim1 + dim2;
+            int maxDim = Math.Max(dim1, dim2);
 
-            // Вычисляем новую форму
             int[] outShape = (int[])x1.Shape.Clone();
             outShape[outShape.Length - 1] = outDim;
 
-            int numRows = x1.Size / dim1; // Количество плоских строк (B * SeqLen)
-
-            // Создаем результирующий тензор во VRAM
+            int numRows = x1.Size / dim1;
             bool requiresGrad = x1.RequiresGrad || x2.RequiresGrad;
-            Tensor y = new Tensor(outShape, _computeCtx.Context, "cat_y",MemoryFlags.ReadWrite, requiresGrad: requiresGrad);
+            Tensor y = new Tensor(outShape, _computeCtx.Context, "cat_y", MemoryFlags.ReadWrite, requiresGrad: requiresGrad);
 
-            // Настройка сетки потоков (1 поток на одну строку)
-            IntPtr localSize = new IntPtr(64);
-            int globalWorkSize = ((numRows + 63) / 64) * 64;
-            IntPtr globalSize = new IntPtr(globalWorkSize);
+            // 2D-сетка: ось X = max(dim1, dim2), ось Y = numRows
+            const int WG_X = 64;
+            const int WG_Y = 4;
+            int globalX = ((maxDim + WG_X - 1) / WG_X) * WG_X;
+            int globalY = ((numRows + WG_Y - 1) / WG_Y) * WG_Y;
 
             CommandQueue activeQueue = DeviceQueueRegistry.GetCurrent();
-
-            // Передаем аргументы в OpenCL ядро
             _kernelCatForward.Arguments[0].SetValue(x1.DataBuffer);
             _kernelCatForward.Arguments[1].SetValue(x2.DataBuffer);
             _kernelCatForward.Arguments[2].SetValue(y.DataBuffer);
@@ -1359,51 +1358,51 @@ namespace cstorchcl.compiler
             _kernelCatForward.Arguments[4].SetValue(dim1);
             _kernelCatForward.Arguments[5].SetValue(dim2);
 
-            activeQueue.EnqueueNDRangeKernel(_kernelCatForward, new[] { globalSize }, new[] { localSize });
-            //activeQueue.Finish();
+            activeQueue.EnqueueNDRangeKernel(
+                _kernelCatForward,
+                new[] { (IntPtr)globalX, (IntPtr)globalY },
+                new[] { (IntPtr)WG_X, (IntPtr)WG_Y }
+            );
 
-            // Регистрация в Autograd графе
             if (y.RequiresGrad)
             {
                 y.Creator = new CatOp(x1, x2, y, this);
             }
-
             return y;
         }
 
-        /// <summary>
-        /// Реализация обратного прохода ядра Cat для Autograd.
-        /// </summary>
         public (Tensor gradInput1, Tensor gradInput2) CatBackward(Tensor gradOutput, Tensor x1, Tensor x2)
         {
             int dim1 = x1.Shape[x1.Shape.Length - 1];
             int dim2 = x2.Shape[x2.Shape.Length - 1];
             int numRows = x1.Size / dim1;
+            int maxDim = Math.Max(dim1, dim2);
 
-            // Выделяем память под градиенты исходных тензоров
-            Tensor gradInput1 = new Tensor(x1.Shape, _computeCtx.Context,"catbackward_gradi1", MemoryFlags.ReadWrite, requiresGrad: false);
+            Tensor gradInput1 = new Tensor(x1.Shape, _computeCtx.Context, "catbackward_gradi1", MemoryFlags.ReadWrite, requiresGrad: false);
             Tensor gradInput2 = new Tensor(x2.Shape, _computeCtx.Context, "catbackward_gradi2", MemoryFlags.ReadWrite, requiresGrad: false);
 
-            IntPtr localSize = new IntPtr(64);
-            int globalWorkSize = ((numRows + 63) / 64) * 64;
-            IntPtr globalSize = new IntPtr(globalWorkSize);
+            const int WG_X = 64;
+            const int WG_Y = 4;
+            int globalX = ((maxDim + WG_X - 1) / WG_X) * WG_X;
+            int globalY = ((numRows + WG_Y - 1) / WG_Y) * WG_Y;
 
             CommandQueue activeQueue = DeviceQueueRegistry.GetCurrent();
-           
-            {
-                _kernelCatBackward.Arguments[0].SetValue(gradOutput.DataBuffer);
-                _kernelCatBackward.Arguments[1].SetValue(gradInput1.DataBuffer);
-                _kernelCatBackward.Arguments[2].SetValue(gradInput2.DataBuffer);
-            }
+            _kernelCatBackward.Arguments[0].SetValue(gradOutput.DataBuffer);
+            _kernelCatBackward.Arguments[1].SetValue(gradInput1.DataBuffer);
+            _kernelCatBackward.Arguments[2].SetValue(gradInput2.DataBuffer);
             _kernelCatBackward.Arguments[3].SetValue(numRows);
             _kernelCatBackward.Arguments[4].SetValue(dim1);
             _kernelCatBackward.Arguments[5].SetValue(dim2);
 
-            activeQueue.EnqueueNDRangeKernel(_kernelCatBackward, new[] { globalSize }, new[] { localSize });
-            //activeQueue.Finish();
+            activeQueue.EnqueueNDRangeKernel(
+                _kernelCatBackward,
+                new[] { (IntPtr)globalX, (IntPtr)globalY },
+                new[] { (IntPtr)WG_X, (IntPtr)WG_Y }
+            );
 
             return (gradInput1, gradInput2);
         }
+
         Kernel _kernelCatBackward, _kernelCatForward;
         #endregion
         #region CrossEntropy
@@ -1564,26 +1563,26 @@ _kernelLinearForwardTiled.Arguments[3].SetValue(y.DataBuffer);
 
             Tensor gradBias = new Tensor(biasShape, _computeCtx.Context, "LinearBiasBackward_gradbias", MemoryFlags.ReadWrite, requiresGrad: false);
 
-            IntPtr localSize = new IntPtr(256);
-            IntPtr globalSize = new IntPtr(n * 256);
+            // Запускаем по 1 потоку на каждый выходной признак N с группой 256
+            const int localX = 256;
+            int globalX = ((n + localX - 1) / localX) * localX;
 
             CommandQueue activeQueue = DeviceQueueRegistry.GetCurrent();
-
             int t = 0;
-           
-            {
-                _kernelLinearBiasBackward.Arguments[t++].SetValue(gradOutput.DataBuffer);
-                _kernelLinearBiasBackward.Arguments[t++].SetValue(gradBias.DataBuffer);
-            }
-            
+            _kernelLinearBiasBackward.Arguments[t++].SetValue(gradOutput.DataBuffer);
+            _kernelLinearBiasBackward.Arguments[t++].SetValue(gradBias.DataBuffer);
             _kernelLinearBiasBackward.Arguments[t++].SetValue(totalRows);
             _kernelLinearBiasBackward.Arguments[t++].SetValue(n);
 
-            activeQueue.EnqueueNDRangeKernel(_kernelLinearBiasBackward, new[] { globalSize }, new[] { localSize });
-            //activeQueue.Finish();
+            activeQueue.EnqueueNDRangeKernel(
+                _kernelLinearBiasBackward,
+                new[] { (IntPtr)globalX },
+                new[] { (IntPtr)localX }
+            );
 
             return gradBias;
         }
+
         private Kernel _kernelLinearBiasBackward, _kernelLinearForwardTiled;
         #endregion
         #region Sum

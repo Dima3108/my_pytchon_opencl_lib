@@ -106,7 +106,15 @@ namespace cstorchcl.core
                     $"Не удалось создать контекст OpenCL для устройства '{Device.Name}' ({Device.Vendor}).", ex);
             }
             #region DeviceParametrs
- warp_size = (int)Device.GetWarpSizeNv();
+            try
+            {
+                warp_size = (int)Device.GetWarpSizeNv();
+            }
+            catch
+            {
+                warp_size = 32;
+            }
+           // Device.
             MAX_WORK_GROUP_SIZE = (int)Device.MaxWorkGroupSize;
             if (MAX_WORK_GROUP_SIZE < warp_size)
             {

@@ -47,6 +47,8 @@ kernel void embedding_forward(
 // ============================================================================
 #define EMB_TILE_TOKENS 256
 
+#define EMB_TILE_TOKENS 256
+
 kernel void embedding_backward(
     global const float* grad_output, // [total_tokens, embedding_dim]
     global const int* X_tokens,      // [total_tokens]
@@ -55,38 +57,26 @@ kernel void embedding_backward(
     const int total_tokens,
     const int vocab_size
 ) {
-    int dim_idx = get_global_id(0);
-    int vocab_id = get_global_id(1);
+    int dim_idx  = get_global_id(0); // [0 .. embedding_dim - 1] -> быстрая коалесцированная ось
+    int vocab_id = get_global_id(1); // [0 .. vocab_size - 1]
 
-    int flat_lid = get_local_id(1) * get_local_size(0) + get_local_id(0);
-    int wg_size = get_local_size(0) * get_local_size(1);
-
-    // Кэшируем порцию ID токенов в быстрой локальной памяти группы (всего 1 КБ)
-    __local int local_tokens[EMB_TILE_TOKENS];
+    // Теперь барьеров нет, поэтому ранний выход абсолютно безопасен!
+    if (dim_idx >= embedding_dim || vocab_id >= vocab_size) return;
 
     float sum = 0.0f;
+    global const float* grad_ptr = grad_output + dim_idx;
 
-    for (int base_t = 0; base_t < total_tokens; base_t += EMB_TILE_TOKENS) {
-        // Кооперативная загрузка 256 токенов в __local память всеми потоками группы
-        for (int i = flat_lid; i < EMB_TILE_TOKENS; i += wg_size) {
-            int t_idx = base_t + i;
-            local_tokens[i] = (t_idx < total_tokens) ? X_tokens[t_idx] : -1;
-        }
-        barrier(CLK_LOCAL_MEM_FENCE);
+    #pragma unroll 8
+    for (int t = 0; t < total_tokens; t++) {
+        // Аппаратный Broadcast из L1-кэша: все потоки варпа читают один и тот же X_tokens[t]
+        int token = X_tokens[t];
 
-        if (dim_idx < embedding_dim && vocab_id < vocab_size) {
-            int limit = min(EMB_TILE_TOKENS, total_tokens - base_t);
-            for (int i = 0; i < limit; i++) {
-                if (local_tokens[i] == vocab_id) {
-                    sum += grad_output[(base_t + i) * embedding_dim + dim_idx];
-                }
-            }
+        // Читаем градиент только при совпадении токена (избегаем чтения 12000 float для редких слов!)
+        if (token == vocab_id) {
+            sum += grad_ptr[t * embedding_dim];
         }
-        barrier(CLK_LOCAL_MEM_FENCE);
     }
 
-    // Прямая запись без атомиков и без предварительного обнуления буфера на CPU!
-    if (dim_idx < embedding_dim && vocab_id < vocab_size) {
-        grad_weight[vocab_id * embedding_dim + dim_idx] = sum;
-    }
+    grad_weight[vocab_id * embedding_dim + dim_idx] = sum;
 }
+

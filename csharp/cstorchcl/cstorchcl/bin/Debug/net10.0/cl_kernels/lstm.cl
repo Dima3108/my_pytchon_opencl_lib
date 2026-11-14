@@ -33,107 +33,99 @@ void atomic_add_float(global volatile float *source, const float val) {
 // 1. ПРЯМОЙ ПРОХОД GEMM: XW_out = X * W + bias (4x4 Register Tiling)
 // ============================================================================
 
+#define MAX_LOCAL_HIDDEN 2048
+
+
+
 kernel void lstm_recurrent_forward(
-    global const float
-        *XW_in, // Готовая проекция X*W + bias: [Batch, SeqLen, 4 * HiddenSize]
-    global const float *U,    // [HiddenSize, 4 * HiddenSize]
-    global float *H_out,      // [Batch, SeqLen, HiddenSize]
-    global float *workspace,  // [SeqLen, Batch, 5 * HiddenSize]
-    global float *c_curr_buf, // [Batch, HiddenSize]
-    global float *h_curr_buf, // [Batch, HiddenSize]
-    const int batch_size, const int seq_len, const int hidden_size) {
-  int b = get_group_id(0);
-  int lid = get_local_id(1);
-  int wg_size = get_local_size(1);
+    global const float* XW_in,    // [Batch, SeqLen, 4 * HiddenSize]
+    global const float* U,        // [HiddenSize, 4 * HiddenSize]
+    global float* H_out,          // [Batch, SeqLen, HiddenSize]
+    global float* workspace,      // [SeqLen, Batch, 5 * HiddenSize]
+    const int batch_size,
+    const int seq_len,
+    const int hidden_size
+) {
+    int lid     = get_local_id(0);
+    int wg_size = get_local_size(0);
+    int b       = get_group_id(2);
 
-  if (b >= batch_size)
-    return;
+    if (b >= batch_size) return;
 
-  global float *c_curr_ptr = c_curr_buf + (b * hidden_size);
-  global float *h_curr_ptr = h_curr_buf + (b * hidden_size);
+    __local float c_local[MAX_LOCAL_HIDDEN];
+    __local float h_local[MAX_LOCAL_HIDDEN];
 
-  for (int hid = lid; hid < hidden_size; hid += wg_size) {
-    c_curr_ptr[hid] = 0.0f;
-    h_curr_ptr[hid] = 0.0f;
-  }
-  barrier(CLK_GLOBAL_MEM_FENCE);
-
-  int total_gates = 4 * hidden_size;
-  int ws_stride = 5 * hidden_size;
-  int vec_hidden = (hidden_size / 4) * 4;
-
-  for (int t = 0; t < seq_len; t++) {
-    // XW_in имеет форму [Batch, SeqLen, 4 * HiddenSize]
-    int xw_offset = (b * seq_len + t) * total_gates;
-    int ws_offset = (t * batch_size + b) * ws_stride;
-    int h_out_offset = (b * seq_len + t) * hidden_size;
-
-    // 1. Только рекуррентное умножение H_{t-1} * U + готовый XW_in
     for (int hid = lid; hid < hidden_size; hid += wg_size) {
-      for (int g = 0; g < 4; g++) {
-        int gate_idx = g * hidden_size + hid;
-        float val = XW_in[xw_offset + gate_idx];
+        c_local[hid] = 0.0f;
+        h_local[hid] = 0.0f;
+    }
+    barrier(CLK_LOCAL_MEM_FENCE);
 
-        int h = 0;
-        for (; h <= hidden_size - 4; h += 4) {
-          float4 h_vec = vload4(0, h_curr_ptr + h);
-          float4 u_vec = (float4)(U[(h + 0) * total_gates + gate_idx],
-                                  U[(h + 1) * total_gates + gate_idx],
-                                  U[(h + 2) * total_gates + gate_idx],
-                                  U[(h + 3) * total_gates + gate_idx]);
-          val += dot(h_vec, u_vec);
+    int total_gates = 4 * hidden_size;
+    int ws_stride   = 5 * hidden_size;
+
+    for (int t = 0; t < seq_len; t++) {
+        int xw_offset    = (b * seq_len + t) * total_gates;
+        int ws_offset    = (t * batch_size + b) * ws_stride;
+        int h_out_offset = (b * seq_len + t) * hidden_size;
+
+        // Каждый поток берет свой нейрон hid и считает ВСЕ 4 гейта (i, f, g, o) в регистрах!
+        for (int hid = lid; hid < hidden_size; hid += wg_size) {
+            int idx_i = 0 * hidden_size + hid;
+            int idx_f = 1 * hidden_size + hid;
+            int idx_g = 2 * hidden_size + hid;
+            int idx_o = 3 * hidden_size + hid;
+
+            // Читаем предвычисленные проекции X*W + bias для всех 4 гейтов
+            float4 acc = (float4)(
+                XW_in[xw_offset + idx_i],
+                XW_in[xw_offset + idx_f],
+                XW_in[xw_offset + idx_g],
+                XW_in[xw_offset + idx_o]
+            );
+
+            // Проходим по h_local ОДИН раз вместо четырех!
+            for (int h = 0; h < hidden_size; h++) {
+                float h_val_prev = h_local[h];
+                int u_row = h * total_gates;
+
+                float4 u_gates = (float4)(
+                    U[u_row + idx_i],
+                    U[u_row + idx_f],
+                    U[u_row + idx_g],
+                    U[u_row + idx_o]
+                );
+
+                // Векторное FMA сразу для 4 гейтов за одну инструкцию
+                acc = fma((float4)(h_val_prev), u_gates, acc);
+            }
+
+            // Сохраняем сырые гейты в workspace для будущего Backward (только запись, без чтения!)
+            workspace[ws_offset + idx_i] = acc.x;
+            workspace[ws_offset + idx_f] = acc.y;
+            workspace[ws_offset + idx_g] = acc.z;
+            workspace[ws_offset + idx_o] = acc.w;
+
+            // Сразу в регистрах вычисляем активации и обновляем состояния (БЕЗ промежуточного барьера!)
+            float i_gate = sigmoid(acc.x);
+            float f_gate = sigmoid(acc.y);
+            float g_gate = tanh(acc.z);
+            float o_gate = sigmoid(acc.w);
+
+            float c_val = f_gate * c_local[hid] + i_gate * g_gate;
+            c_local[hid] = c_val;
+            workspace[ws_offset + 4 * hidden_size + hid] = c_val;
+
+            float h_val = o_gate * tanh(c_val);
+            h_local[hid] = h_val;
+            H_out[h_out_offset + hid] = h_val;
         }
-        for (; h < hidden_size; h++) {
-          val += h_curr_ptr[h] * U[h * total_gates + gate_idx];
-        }
 
-        workspace[ws_offset + gate_idx] = val;
-      }
+        // Единственный быстрый барьер на весь шаг времени t: ждем обновления h_local перед шагом t + 1
+        barrier(CLK_LOCAL_MEM_FENCE);
     }
-
-    barrier(CLK_GLOBAL_MEM_FENCE);
-
-    // 2. Векторизованные активации по 4 нейрона за итерацию
-    for (int hid = lid * 4; hid < vec_hidden; hid += wg_size * 4) {
-      float4 i_gate =
-          sigmoid4(vload4(0, workspace + ws_offset + 0 * hidden_size + hid));
-      float4 f_gate =
-          sigmoid4(vload4(0, workspace + ws_offset + 1 * hidden_size + hid));
-      float4 g_gate =
-          tanh(vload4(0, workspace + ws_offset + 2 * hidden_size + hid));
-      float4 o_gate =
-          sigmoid4(vload4(0, workspace + ws_offset + 3 * hidden_size + hid));
-
-      float4 c_prev = vload4(0, c_curr_ptr + hid);
-      float4 c_val = f_gate * c_prev + i_gate * g_gate;
-
-      vstore4(c_val, 0, c_curr_ptr + hid);
-      vstore4(c_val, 0, workspace + ws_offset + 4 * hidden_size + hid);
-
-      float4 h_val = o_gate * tanh(c_val);
-      vstore4(h_val, 0, h_curr_ptr + hid);
-      vstore4(h_val, 0, H_out + h_out_offset + hid);
-    }
-
-    // Хвост, если hidden_size не кратен 4
-    for (int hid = vec_hidden + lid; hid < hidden_size; hid += wg_size) {
-      float i_gate = sigmoid(workspace[ws_offset + 0 * hidden_size + hid]);
-      float f_gate = sigmoid(workspace[ws_offset + 1 * hidden_size + hid]);
-      float g_gate = tanh(workspace[ws_offset + 2 * hidden_size + hid]);
-      float o_gate = sigmoid(workspace[ws_offset + 3 * hidden_size + hid]);
-
-      float c_val = f_gate * c_curr_ptr[hid] + i_gate * g_gate;
-      c_curr_ptr[hid] = c_val;
-      workspace[ws_offset + 4 * hidden_size + hid] = c_val;
-
-      float h_val = o_gate * tanh(c_val);
-      h_curr_ptr[hid] = h_val;
-      H_out[h_out_offset + hid] = h_val;
-    }
-
-    barrier(CLK_GLOBAL_MEM_FENCE);
-  }
 }
+
 
 // ============================================================================
 // ОБРАТНЫЙ ПРОХОД (BACKWARD) БЕЗ АТОМИКОВ ВНУТРИ ЦИКЛА ПО ВРЕМЕНИ
