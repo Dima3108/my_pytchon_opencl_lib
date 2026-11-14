@@ -110,8 +110,8 @@ namespace cstorchcl.core
 
             // Создаем чистые тензоры состояний. Они не требуют расчета градиентов по умолчанию, 
             // так как являются начальными константными точками отсчета (листьями графа).
-            _hState = new Tensor(zeroPattern, stateShape, ComputeContext.Context, MemoryFlags.ReadWrite, requiresGrad: false);
-            _cState = new Tensor(zeroPattern, stateShape, ComputeContext.Context, MemoryFlags.ReadWrite, requiresGrad: false);
+            _hState = new Tensor(zeroPattern, stateShape, ComputeContext.Context, "LSTMStateful_hSatete", MemoryFlags.ReadWrite, requiresGrad: false);
+            _cState = new Tensor(zeroPattern, stateShape, ComputeContext.Context, "LSTMStateful_cSatete", MemoryFlags.ReadWrite, requiresGrad: false);
 
             _isStateInitialized = true;
         }

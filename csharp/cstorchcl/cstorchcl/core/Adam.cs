@@ -26,15 +26,15 @@ namespace cstorchcl.optimizers
         private readonly Program _adamProgram;
         private readonly Kernel _adamKernel;
         private readonly Context _context;
-
-        public Adam(List<Tensor> parameters, float lr = 0.001f, float beta1 = 0.9f, float beta2 = 0.999f, float epsilon = 1e-8f)
+        private readonly ComputeContext _ComputeContext;
+        public Adam(ComputeContext context,List<Tensor> parameters, float lr = 0.001f, float beta1 = 0.9f, float beta2 = 0.999f, float epsilon = 1e-8f)
         {
             _parameters = parameters ?? throw new ArgumentNullException(nameof(parameters));
             _lr = lr;
             _beta1 = beta1;
             _beta2 = beta2;
             _epsilon = epsilon;
-
+            _ComputeContext = context;
             // Берем контекст из первого доступного тензора
             if (_parameters.Count == 0)
                 throw new ArgumentException("Список параметров для оптимизации не должен быть пустым.");
@@ -75,7 +75,7 @@ namespace cstorchcl.optimizers
             float biasCorrection2 = (float)(1.0 - Math.Pow(_beta2, _t));
 
             var queue = DeviceQueueRegistry.GetCurrent();
-
+            int i = 0;
             foreach (var param in _parameters)
             {
                 // Оптимизируем только те тензоры, для которых считаются градиенты и они были накоплены
@@ -87,19 +87,22 @@ namespace cstorchcl.optimizers
                 if (!_mStates.ContainsKey(param))
                 {
                     // Создаем массивы нулей для инициализации (как в твоем фиксе для EmbeddingBackward)
-                    float[] zeroPattern = new float[size];
+                    //float[] zeroPattern = new float[size];
                     long bytesSize = (long)size * sizeof(float);
 
-                    Buffer mBuf = _context.CreateBuffer(MemoryFlags.ReadWrite, bytesSize);
-                    Buffer vBuf = _context.CreateBuffer(MemoryFlags.ReadWrite, bytesSize);
-
+                    string keySuffix = param.TensorID ?? param.GetHashCode().ToString();
+                    Buffer mBuf = OpenCLBufferManager.GetOrCreateBuffer(queue.Context, $"adam_m_{i++}", bytesSize);
+                    Buffer vBuf = OpenCLBufferManager.GetOrCreateBuffer(queue.Context, $"adam_v_{i++}", bytesSize);
                     // Синхронно обнуляем буферы на устройстве
                     unsafe
                     {
-                        fixed (float* zPtr = zeroPattern)
+                        // fixed (float* zPtr = zeroPattern)
+                        //float* zPtr = (float*)HostPtrBufferManager.GetOrCreateBuffer($"zeroBuffer{size}", (int)bytesSize,0);
                         {
-                            queue.EnqueueWriteBuffer(mBuf, true, 0, bytesSize, (IntPtr)zPtr);
-                            queue.EnqueueWriteBuffer(vBuf, true, 0, bytesSize, (IntPtr)zPtr);
+                            //  queue.EnqueueWriteBuffer(mBuf, true, 0, bytesSize, (IntPtr)zPtr);
+                            //  queue.EnqueueWriteBuffer(vBuf, true, 0, bytesSize, (IntPtr)zPtr);
+                            OpenCLBufferFiller.FillZero(mBuf, bytesSize);
+                            OpenCLBufferFiller.FillZero(vBuf, bytesSize);
                         }
                     }
 
@@ -126,15 +129,13 @@ namespace cstorchcl.optimizers
                 _adamKernel.Arguments[argIdx++].SetValue(size);
 
                 // Запуск одномерной сетки потоков по размеру тензора
-                IntPtr globalSize = new IntPtr(size);
-                int l = 16;
-                while (size % l != 0)
-                    l--;
-                queue.EnqueueNDRangeKernel(_adamKernel, new[] { globalSize }, new[] { (IntPtr)l });
+                int localSize = _ComputeContext.MAX_WORK_GROUP_SIZE;
+                long globalSize = ((size + localSize - 1) / localSize) * localSize;
+                queue.EnqueueNDRangeKernel(_adamKernel, new[] {(IntPtr) globalSize }, new[] { (IntPtr)localSize });
             }
 
             // Дожидаемся завершения применения шага оптимизатора ко всем параметрам на GPU
-            queue.Finish();
+          //  queue.Finish();
         }
 
         /// <summary>
@@ -148,17 +149,19 @@ namespace cstorchcl.optimizers
                 if (param.Grad == null) continue;
 
                 // Обнуляем буфер градиента через хост-массив сил .NET
-                float[] zeroPattern = new float[param.Grad.Size];
-                long bytesSize = (long)param.Grad.Size * sizeof(float);
+              //  float[] zeroPattern = new float[param.Grad.Size];
+               long bytesSize = (long)param.Grad.Size * sizeof(float);
                 unsafe
                 {
-                    fixed (float* zPtr = zeroPattern)
+                    //  fixed (float* zPtr = zeroPattern)
+                   // float* zPtr = (float*)HostPtrBufferManager.GetOrCreateBuffer($"zeroBuffer{param.Grad.Size}",(int)bytesSize,0);
                     {
-                        queue.EnqueueWriteBuffer(param.Grad.DataBuffer, true, 0, bytesSize, (IntPtr)zPtr);
+                       // queue.EnqueueWriteBuffer(param.Grad.DataBuffer, true, 0, bytesSize, (IntPtr)zPtr);
                     }
+                    OpenCLBufferFiller.FillZero(param.Grad.DataBuffer, bytesSize);
                 }
             }
-            queue.Finish();
+            //queue.Finish();
         }
     }
 }

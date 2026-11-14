@@ -32,8 +32,8 @@ namespace cstorchcl.tests
 
             // ИСПРАВЛЕНИЕ 1: Создаем тензоры весов эмбеддингов прямо в коде теста
             int[] embShape = { vocabSize, encoderHiddenDim };
-            Tensor embeddingWeightsEncoder = new Tensor(embShape, context, MemoryFlags.ReadWrite, requiresGrad: true);
-            Tensor embeddingWeightsDecoder = new Tensor(embShape, context, MemoryFlags.ReadWrite, requiresGrad: true);
+            Tensor embeddingWeightsEncoder = new Tensor(embShape, context,"embed_encoder_weight", MemoryFlags.ReadWrite, requiresGrad: true);
+            Tensor embeddingWeightsDecoder = new Tensor(embShape, context,"embed_decoder_weigth", MemoryFlags.ReadWrite, requiresGrad: true);
             float[] initW = new float[vocabSize * encoderHiddenDim];
             Random r = new Random();
             float bound = (float)(Math.Sqrt(6.0) / Math.Sqrt(vocabSize));
@@ -63,14 +63,14 @@ namespace cstorchcl.tests
             parameters.AddRange(model.FullyConnectedOut.GetParameters());
 
                 //mockLossTarget.Dispose();
-            Adam optimizer = new Adam(parameters, lr: 1e-4f);
+            Adam optimizer = new Adam(computeCtx,parameters, lr: 1e-4f);
 
-            using var dataLoader = new StreamDataLoader(datasetPath, batchSize, blockTokens);
+            using var dataLoader = new StreamDataLoader(datasetPath, batchSize, blockTokens,context,queue.Device);
 
             Console.WriteLine("\n[Успех] Все тензоры параметров внесены в Adam.");
             Console.WriteLine("----------------------------------------------------------------");
-            var encInputBuf = context.CreateBuffer(MemoryFlags.ReadOnly, sizeof(int) * blockTokens * batchSize);
-            var decTargetBuf= context.CreateBuffer(MemoryFlags.ReadOnly, sizeof(int) * blockTokens * batchSize);
+            //var encInputBuf = context.CreateBuffer(MemoryFlags.ReadOnly, sizeof(int) * blockTokens * batchSize);
+            //var decTargetBuf= context.CreateBuffer(MemoryFlags.ReadOnly, sizeof(int) * blockTokens * batchSize);
             int BATCH_COUNT = 7;
             double sred_inter = 0;
             for (int batchIdx = 0; batchIdx < BATCH_COUNT; batchIdx++)
@@ -81,42 +81,38 @@ namespace cstorchcl.tests
                 //model.DecoderLstm.ResetStates();
 
                 // Извлекаем нативные буферы из даталоадера
-                dataLoader.GetBatch(batchIdx, context,encInputBuf,decTargetBuf);
-
+                //dataLoader.GetBatch(batchIdx, context,encInputBuf,decTargetBuf);
+                var (encInputBuf, decTargetBuf) = dataLoader.GetBatch(batchIdx);
                 // ... [Внутри обучающего цикла] ...
 
                 // Прямой проход сети — получаем полные логиты [Batch, SeqLen, VocabSize]
                 Tensor logits = model.Forward(encInputBuf, decTargetBuf, embeddingWeightsEncoder, embeddingWeightsDecoder, blockTokens, batchSize);
-#if DEBUG
-               // HostReturner.PrintTensor(logits, "логиты полученные из модели", true);
-                /*HostReturner.PrintTensor(model.EncoderLstm.WeightU, "enocderU", true);
-                HostReturner.PrintTensor(model.EncoderLstm.WeightW, "enocderW", true);
-                HostReturner.PrintTensor(model.DecoderLstm.WeightU, "decoderU", true);
-                HostReturner.PrintTensor(model.EncoderLstm.WeightW, "decoderW", true);*/
-#endif
+
                 // Подготавливаем One-Hot мишень со сдвигом [Batch, SeqLen - 1, VocabSize] на основе первого ядра
-                Tensor trueLossTarget = clGlob.PrepareTrueTargets(decTargetBuf, batchSize, blockTokens, vocabSize);
+                //Tensor trueLossTarget = clGlob.PrepareTrueTargets(decTargetBuf, batchSize, blockTokens, vocabSize);
 
                 // Усекаем логиты до (SeqLen - 1), и теперь SliceOp автоматически свяжет граф!
-                Tensor slicedLogits = clGlob.SliceLogitsForLoss(logits,computeCtx);
+                //Tensor slicedLogits = clGlob.SliceLogitsForLoss(logits,computeCtx);
 
                 // Считаем честную ошибку между усеченными логитами и One-Hot таргетом
                 /*Console.WriteLine("тензор slicedLogits");
                 HostReturner.PrintTensor(slicedLogits);
                 Console.WriteLine("тензор trueLossTarget");
                 HostReturner.PrintTensor(trueLossTarget);*/
-                Tensor loss = clGlob.CrossEntropyLoss(slicedLogits, trueLossTarget);
-
+                //Tensor loss = clGlob.CrossEntropyLoss(slicedLogits, trueLossTarget);
+                Tensor loss = clGlob.SparseCrossEntropyLoss(logits, decTargetBuf);
                 // ... [Backward и очистка памяти] ...
 
 
-                float[] lossValue = new float[1];
+                //  float[] lossValue = new float[1];
+                IntPtr pL = HostPtrBufferManager.GetOrCreateBuffer("loss1", sizeof(float));
                 unsafe
                 {
-                    fixed (float* pL = lossValue)
+                    //fixed (float* pL = lossValue)
+
                         queue.EnqueueReadBuffer(loss.DataBuffer, true, 0, sizeof(float), (IntPtr)pL);
                 }
-                queue.Finish();
+                //queue.Finish();
 
                 AutoGrad.Backward(loss, context);
                 optimizer.Step();
@@ -125,26 +121,28 @@ namespace cstorchcl.tests
                 batchTimer.Stop();
                 long totalTokensProcessed = (long)batchSize * blockTokens;
                 double tokensPerSecond = totalTokensProcessed / batchTimer.Elapsed.TotalSeconds;
-                if (batchIdx >= 3)
+                if (batchIdx >= 3||BATCH_COUNT<3)
                 {
                     sred_inter += batchTimer.Elapsed.TotalSeconds;
                 }
-#if DEBUG
-              /*  HostReturner.PrintTensor(model.EncoderLstm.WeightU, "enocderU", true);
-                HostReturner.PrintTensor(model.EncoderLstm.WeightW, "enocderW", true);
-                HostReturner.PrintTensor(model.DecoderLstm.WeightU, "decoderU", true);
-                HostReturner.PrintTensor(model.EncoderLstm.WeightW, "decoderW", true);*/
-               // HostReturner.PrintTensor(model.FullyConnectedOut.Weight, "LinearWeigth", true);
-#endif
-                Console.WriteLine($"Батч {batchIdx + 1:D2}/{BATCH_COUNT} | MSE Loss: {lossValue[0]:F6} | Скорость: {tokensPerSecond:F0} токенов/сек({1/batchTimer.Elapsed.TotalSeconds} it/s)");
+
+                unsafe
+                {
+                    Console.WriteLine($"Батч {batchIdx + 1:D2}/{BATCH_COUNT} | MSE Loss: {((float*)pL)[0]:F6} | Скорость: {tokensPerSecond:F0} токенов/сек({1 / batchTimer.Elapsed.TotalSeconds} it/s)");
+
+                }
             }
-            sred_inter /= BATCH_COUNT - 3;
-            encInputBuf.Dispose();
-            decTargetBuf.Dispose();
+            queue.Finish();
+            sred_inter /= BATCH_COUNT - (BATCH_COUNT>3?3:0);
+
+            //encInputBuf.Dispose();
+           // decTargetBuf.Dispose();
             Console.WriteLine("----------------------------------------------------------------");
             Console.WriteLine($"средняя скорость обработки:{1/sred_inter} it/s");
             Console.WriteLine("----------------------------------------------------------------");
             Console.WriteLine("Эксперимент успешно выполнен!");
+            OpenCLBufferManager.DisposeAll();
+            cstorchcl.compiler.HostPtrBufferManager.DisposeAll();
         }
         
         /// <summary>

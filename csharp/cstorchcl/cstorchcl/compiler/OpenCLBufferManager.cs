@@ -19,7 +19,7 @@ namespace cstorchcl.compiler
         /// Возвращает существующий буфер из кэша, если его размер >= bufSize и совпадает контекст.
         /// В противном случае освобождает старый буфер и создает новый.
         /// </summary>
-        public static NOpenCL.Buffer GetOrCreateBuffer(Context context, string bufName, long bufSize)
+        public static NOpenCL.Buffer GetOrCreateBuffer(Context context, string bufName, long bufSize,MemoryFlags memAccess=MemoryFlags.ReadWrite)
         {
             if (context == null) throw new ArgumentNullException(nameof(context));
             if (string.IsNullOrEmpty(bufName)) throw new ArgumentException("Имя буфера не может быть пустым.", nameof(bufName));
@@ -30,12 +30,12 @@ namespace cstorchcl.compiler
             {
                 if (ReferenceEquals(entry.Context, context) && entry.Size >= bufSize)
                 {
-                    if (entry.Buffer == null || entry.Buffer.Size == 0)
+                    /*if (entry.Buffer == null || entry.Buffer.Size == 0)
                     {
                         // _cache[bufName].Buffer = null;
                         _cache.Remove(bufName, out BufferEntry r);
-                        return GetOrCreateBuffer(context, bufName, bufSize);
-                    }
+                        return GetOrCreateBuffer(context, bufName, bufSize,memAccess);
+                    }*/
                     return entry.Buffer;
                 }
             }
@@ -54,7 +54,7 @@ namespace cstorchcl.compiler
                     entry.Buffer.Dispose();
                 }
 
-                var newBuffer = context.CreateBuffer(MemoryFlags.ReadWrite, bufSize);
+                var newBuffer = context.CreateBuffer(memAccess, bufSize);
                 _cache[bufName] = new BufferEntry(bufSize, newBuffer, context);
                 return newBuffer;
             }

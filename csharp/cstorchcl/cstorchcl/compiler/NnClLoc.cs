@@ -30,16 +30,17 @@ namespace cstorchcl.compiler
             // ИСПРАВЛЕНИЕ: Выделяем новые изолированные буферы для результатов вычислений
             // =========================================================================
             var outputDict = new Dictionary<string, Tensor>(StringComparer.OrdinalIgnoreCase);
-
+            int lev = 0;
             foreach (var outName in transpiler.OutputTensorNames)
             {
                 Tensor originalIn = tensors[outName];
 
                 // Создаем НОВЫЙ тензор. Он будет чистым результатом JIT-блока!
-                Tensor newOut = new Tensor(originalIn.Shape, context, MemoryFlags.ReadWrite,
+                Tensor newOut = new Tensor(originalIn.Shape, context, $"nncloc_run_newout_tensor{lev}",MemoryFlags.ReadWrite,
                     requiresGrad: tensors.Values.Any(t => t.RequiresGrad));
 
                 outputDict.Add(outName, newOut);
+                lev++;
             }
 
             // Создаем рабочий словарь для запуска ядра на GPU.

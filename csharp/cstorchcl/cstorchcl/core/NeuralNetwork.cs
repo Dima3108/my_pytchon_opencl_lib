@@ -42,11 +42,11 @@ namespace cstorchcl.core
         protected Tensor RegisterParameter(int[] shape, bool requiresGrad = true)
         {
             // Параметры модели изначально создаются с флагом RequiresGrad = true
-            var param = new Tensor(shape, ComputeContext.Context, NOpenCL.MemoryFlags.ReadWrite, requiresGrad);
+            var param = new Tensor(shape, ComputeContext.Context,$"neuronetwork_paramtensor_lev{param_lev++}" ,NOpenCL.MemoryFlags.ReadWrite, requiresGrad);
             _parameters.Add(param);
             return param;
         }
-
+        private int param_lev = 0;
         /// <summary>
         /// Возвращает список всех параметров модели для оптимизатора.
         /// </summary>

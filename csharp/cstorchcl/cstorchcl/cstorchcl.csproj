@@ -54,6 +54,9 @@
     <None Update="cl_kernels\embedding.cl">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </None>
+    <None Update="cl_kernels\FusedSparseCrossEntropyLoss.cl">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </None>
     <None Update="cl_kernels\linear.cl">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </None>
@@ -73,6 +76,9 @@
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </None>
     <None Update="cl_kernels\RMSNorm.cl">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </None>
+    <None Update="cl_kernels\slice_logits_3d.cl">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </None>
     <None Update="cl_kernels\Softmax.cl">

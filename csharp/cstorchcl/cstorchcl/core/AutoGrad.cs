@@ -1,7 +1,8 @@
-﻿using System;
-using System.Collections.Generic;
-using cstorchcl.compiler;
+﻿using cstorchcl.compiler;
 using NOpenCL;
+using System;
+using System.Collections.Concurrent;
+using System.Collections.Generic;
 
 namespace cstorchcl.core
 {
@@ -87,7 +88,7 @@ namespace cstorchcl.core
                     // Запрашиваем у операции расчет градиентов для ее входов
                     Tensor[] inputGrads = op.Backward(tensor.Grad, context);
 
-                    for (int i = 0; i < op.Inputs.Length; i++)
+                    /*for (int i = 0; i < op.Inputs.Length; i++)
                     {
                         Tensor input = op.Inputs[i];
                         if (!input.RequiresGrad) continue;
@@ -106,7 +107,9 @@ HostReturner.PrintTensor(input, "sum_grad", true);
                         Console.WriteLine();
 #endif
                         
-                    }
+                    }*/
+                    if(inputGrads.Length>0)
+                    AccumulateGradients( op.Inputs,inputGrads,context);
                 }
             }
         }
@@ -146,7 +149,90 @@ HostReturner.PrintTensor(input, "sum_grad", true);
                 lc--;
             // Запускаем параллельное сложение по всей длине буфера градиента
             queue.EnqueueNDRangeKernel(kernel, new[] { new IntPtr(targetGrad.Size) }, new[] { (IntPtr)lc });
-            queue.Finish();
+           // queue.Finish();
+        }
+        // Кэш скомпилированных ядер аккумуляции по количеству пар (1, 2, 3...)
+        private static readonly ConcurrentDictionary<int, Kernel> _accumFusedKernels = new();
+
+        /// <summary>
+        /// Динамически собирает и запускает единое OpenCL-ядро для параллельного суммирования
+        /// всех пар градиентов (opInputs[i].Grad += inputGrads[i]) за один вызов.
+        /// </summary>
+        private static void AccumulateGradients(Tensor[] opInputs, Tensor[] inputGrads, Context context)
+        {
+            if (opInputs == null || inputGrads == null) return;
+
+            int pairLimit = Math.Min(opInputs.Length, inputGrads.Length);
+            var validPairs = new List<(Tensor TargetGrad, Tensor SourceGrad)>(pairLimit);
+            long maxLen = 0;
+
+            // 1. Собираем активные пары и находим максимальную длину тензора
+            for (int i = 0; i < pairLimit; i++)
+            {
+                Tensor input = opInputs[i];
+                Tensor grad = inputGrads[i];
+
+                if (input == null || !input.RequiresGrad || grad == null)
+                    continue;
+
+                input.InitGradient(context);
+                validPairs.Add((input.Grad, grad));
+
+                if (input.Grad.Size > maxLen)
+                    maxLen = input.Grad.Size;
+            }
+
+            int count = validPairs.Count;
+            if (count == 0 || maxLen == 0) return;
+
+            var queue = DeviceQueueRegistry.GetCurrent();
+
+            // 2. Получаем из кэша или динамически генерируем ядро под `count` пар
+            Kernel kernel = _accumFusedKernels.GetOrAdd(count, pairCount =>
+            {
+                var sb = new 
+                System.Text.StringBuilder();
+                sb.AppendLine($"kernel void accum_grad_fused_{pairCount}(");
+
+                for (int p = 0; p < pairCount; p++)
+                {
+                    string comma = (p < pairCount - 1) ? "," : "";
+                    sb.AppendLine($"    global float* t{p}, global const float* s{p}, const int len{p}{comma}");
+                }
+
+                sb.AppendLine(") {");
+                sb.AppendLine("    int tid = get_global_id(0);");
+
+                for (int p = 0; p < pairCount; p++)
+                {
+                    sb.AppendLine($"    if (tid < len{p}) {{ t{p}[tid] += s{p}[tid]; }}");
+                }
+
+                sb.AppendLine("}");
+
+                string source = sb.ToString();
+                var program = compiler.JITProgramCache.GetOrCompile(queue.Context, queue.Device, source);
+                return program.CreateKernel($"accum_grad_fused_{pairCount}");
+            });
+
+            // 3. Привязываем буферы и длины всех пар
+            int argIdx = 0;
+            for (int p = 0; p < count; p++)
+            {
+                kernel.Arguments[argIdx++].SetValue(validPairs[p].TargetGrad.DataBuffer);
+                kernel.Arguments[argIdx++].SetValue(validPairs[p].SourceGrad.DataBuffer);
+                kernel.Arguments[argIdx++].SetValue((int)validPairs[p].TargetGrad.Size);
+            }
+
+            // 4. Запускаем с оптимальным размером рабочей группы 256 (без деградации до lc = 1)
+            const int localSize = 256;
+            long globalSize = ((maxLen + localSize - 1) / localSize) * localSize;
+
+            queue.EnqueueNDRangeKernel(
+                kernel,
+                new[] { (IntPtr)globalSize },
+                new[] { (IntPtr)localSize }
+            );
         }
 
     }

@@ -36,7 +36,7 @@ namespace cstorchcl.core
 
             var outputGrads = new Dictionary<string, Tensor>();
             int argIndex = 0;
-
+            int lev = 0;
             foreach (var kvp in _tensorArgs)
             {
                 string name = kvp.Key;
@@ -45,7 +45,7 @@ namespace cstorchcl.core
                 t.InitGradient(context);
 
                 // Выделяем временный буфер для дельты текущего слоя
-                Tensor outLayerGrad = new Tensor(t.Shape, context, MemoryFlags.ReadWrite, requiresGrad: false);
+                Tensor outLayerGrad = new Tensor(t.Shape, context,$"localOp_backward_outlgrad_{lev++}", MemoryFlags.ReadWrite, requiresGrad: false);
                 outputGrads.Add(name, outLayerGrad);
 
                 // =========================================================================
@@ -96,9 +96,9 @@ namespace cstorchcl.core
             // =========================================================================
 
             queue.EnqueueNDRangeKernel(kernel, null, globalWorkSize, localWorkSize);
-            queue.Finish();
+            //queue.Finish();
 
-            queue.Finish();
+           // queue.Finish();
 
             // Формируем результирующий массив градиентов для возврата в AutoGrad
             // ... (после выполнения ядра queue.Finish(); на странице 3)

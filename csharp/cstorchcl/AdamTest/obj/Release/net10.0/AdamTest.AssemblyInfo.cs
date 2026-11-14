@@ -14,7 +14,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("AdamTest")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Release")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+6161c667c727d77d76b2583f9b1a40e53d22cbac")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+be8dbcf3e729db8fb5ac5537994b55accf61f774")]
 [assembly: System.Reflection.AssemblyProductAttribute("AdamTest")]
 [assembly: System.Reflection.AssemblyTitleAttribute("AdamTest")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]

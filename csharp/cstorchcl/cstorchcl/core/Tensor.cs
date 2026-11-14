@@ -1,4 +1,5 @@
-﻿using NOpenCL;
+﻿using cstorchcl.compiler;
+using NOpenCL;
 using System;
 using System.Collections.Generic;
 using System.Text;
@@ -37,7 +38,7 @@ namespace cstorchcl.core
         /// <summary>
         /// Низкоуровневый буфер OpenCL, хранящий значения тензора (Forward pass).
         /// </summary>
-        public NOpenCL.Buffer DataBuffer { get; private set; }
+        public NOpenCL.Buffer DataBuffer { get=>OpenCLBufferManager.GetOrCreateBuffer(DeviceQueueRegistry.GetCurrent().Context,TensorID,sizeof(float)*Size);  }
 
         /// <summary>
         /// Буфер OpenCL, хранящий градиенты тензора (Backward pass). 
@@ -57,7 +58,7 @@ namespace cstorchcl.core
 
         // Внутренний трекер очистки памяти
         private bool _isDisposed = false;
-
+        public string TensorID { get; init; }
         // =========================================================================
         // КОНСТРУКТОРЫ
         // =========================================================================
@@ -69,7 +70,7 @@ namespace cstorchcl.core
         /// <param name="context">Текущий контекст OpenCL, в котором выделяется память.</param>
         /// <param name="flags">Флаги аллокации памяти OpenCL (по умолчанию ReadWrite).</param>
         /// <param name="requiresGrad">Флаг необходимости расчета градиентов.</param>
-        public Tensor(int[] shape, Context context, MemoryFlags flags = MemoryFlags.ReadWrite, bool requiresGrad = false)
+        public Tensor(int[] shape, Context context,string tensor_id, MemoryFlags flags = MemoryFlags.ReadWrite, bool requiresGrad = false)
         {
             if (shape == null || shape.Length == 0)
                 throw new ArgumentException("Форма тензора должна содержать хотя бы одно измерение.", nameof(shape));
@@ -81,13 +82,14 @@ namespace cstorchcl.core
             Size = CalculateSize(shape);
             RequiresGrad = requiresGrad;
             Strides = CalculateStrides(shape);
+            TensorID = tensor_id;
             // Вычисляем размер буфера в байтах. Сейчас жестко завязано на float (4 байта)
             long sizeInBytes = (long)Size * sizeof(float);
 
             try
             {
                 // Аллокация памяти на девайсе через NOpenCL
-                DataBuffer = context.CreateBuffer(flags, sizeInBytes);
+               // DataBuffer = context.CreateBuffer(flags, sizeInBytes);
             }
             catch (Exception ex)
             {
@@ -121,7 +123,7 @@ namespace cstorchcl.core
         /// <param name="context">Текущий контекст OpenCL.</param>
         /// <param name="flags">Флаги памяти OpenCL (по умолчанию ReadWrite).</param>
         /// <param name="requiresGrad">Флаг необходимости расчета градиентов.</param>
-        public unsafe Tensor(float[] data, int[] shape, Context context, MemoryFlags flags = MemoryFlags.ReadWrite, bool requiresGrad = false)
+        public unsafe Tensor(float[] data, int[] shape, Context context,string token_id, MemoryFlags flags = MemoryFlags.ReadWrite, bool requiresGrad = false)
         {
             if (data == null)
                 throw new ArgumentNullException(nameof(data), "Массив данных не может быть null.");
@@ -136,6 +138,7 @@ namespace cstorchcl.core
             Size = CalculateSize(shape);
             RequiresGrad = requiresGrad;
             Strides = CalculateStrides(shape);
+            TensorID = token_id;
             // Важнейшая валидация: проверяем, совпадает ли физический размер массива с логической формой
             if (data.Length != Size)
             {
@@ -151,7 +154,7 @@ namespace cstorchcl.core
                 // если API OpenCL поддерживает прямую аллокацию с копированием.
                 // Но для гарантированной стабильности и гибкости флагов (например, если передали ReadOnly),
                 // мы выделяем чистый буфер и сразу пишем в него через текущую глобальную очередь.
-                DataBuffer = context.CreateBuffer(flags, sizeInBytes);
+                //DataBuffer = context.CreateBuffer(flags, sizeInBytes);
 
                 // Получаем текущую очередь команд из регистра для немедленной записи данных
                 CommandQueue queue = DeviceQueueRegistry.GetCurrent();
@@ -205,7 +208,7 @@ namespace cstorchcl.core
             if (Grad == null)
             {
                 // Градиент всегда имеет ту же форму, что и сам тензор
-                Grad = new Tensor(Shape, context, MemoryFlags.ReadWrite, requiresGrad: false);
+                Grad = new Tensor(Shape, context,TensorID+"_grad", MemoryFlags.ReadWrite, requiresGrad: false);
 
                 // ВАЖНО: В Autograd градиенты перед началом обратного прохода обнуляются.
                 // Заполнение нулями (Zero-init) должно происходить через OpenCL Queue (команда fill или запись массива).
@@ -236,17 +239,17 @@ namespace cstorchcl.core
                 // Освобождаем управляемый объект градиента, если он есть
                 if (Grad != null)
                 {
-                    Grad.Dispose();
+                   // Grad.Dispose();
                     Grad = null;
                 }
             }
 
             // Освобождаем низкоуровневый буфер OpenCL данных
-            if (DataBuffer != null)
+           // if (DataBuffer != null)
             {
                 try
                 {
-                    DataBuffer.Dispose();
+                  //  DataBuffer.Dispose();
                 }
                 catch (Exception ex)
                 {
