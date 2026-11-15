@@ -1,21 +1,8 @@
-
-            kernel void fill_zero_vec16(
-                global uint4* buf_vec,
-                global uchar* buf_bytes,
-                const long num_vec16,
-                const long total_bytes
-            ) {
-                long gid = get_global_id(0);
-
-                // Основной проход: пишем по 16 байт (4 float / 4 int) за раз
-                if (gid < num_vec16) {
-                    buf_vec[gid] = (uint4)(0u, 0u, 0u, 0u);
-                }
-
-                // Хвост: если размер буфера в байтах не кратен 16
-                long tail_offset = num_vec16 * 16L + gid;
-                if (tail_offset < total_bytes) {
-                    buf_bytes[tail_offset] = (uchar)0;
-                }
-            }
-        
+kernel void accum_grad_fused_2(
+    global float* t0, global const float* s0, const int len0,
+    global float* t1, global const float* s1, const int len1
+) {
+    int tid = get_global_id(0);
+    if (tid < len0) { t0[tid] += s0[tid]; }
+    if (tid < len1) { t1[tid] += s1[tid]; }
+}

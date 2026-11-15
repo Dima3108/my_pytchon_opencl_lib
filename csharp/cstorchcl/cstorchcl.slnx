@@ -8,6 +8,7 @@
   </Project>
   <Project Path="AdamTest/AdamTest.csproj" Id="a05d804b-0359-4c7c-a992-24a96c57fd47" />
   <Project Path="cstorchcl/cstorchcl.csproj" />
+  <Project Path="InferenceTest/InferenceTest.csproj" Id="d52295ce-850b-4e8a-a549-78de57fb4f4f" />
   <Project Path="LocalBecnhmark/LocalBecnhmark.csproj" Id="3c08da65-9802-4c66-bf82-7e52b7402b82" />
   <Project Path="LSTMTest/LSTMTest.csproj" Id="e9a876f6-f7a3-4a4d-8428-2e39ab96fbad" />
   <Project Path="TestLLMComponents/TestLLMComponents.csproj" />

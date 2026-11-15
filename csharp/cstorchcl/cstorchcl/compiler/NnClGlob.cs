@@ -847,7 +847,7 @@ namespace cstorchcl.compiler
         }
 
         #region LSTM
-        public unsafe Tensor Lstm(Tensor x, Tensor w, Tensor u, Tensor bias, int hiddenSize, out NOpenCL.Buffer workspace)
+        public unsafe Tensor Lstm(Tensor x, Tensor w, Tensor u, Tensor bias, int hiddenSize, out NOpenCL.Buffer workspace,string layerId)
         {
             int batchSize = x.Shape[0];
             int seqLen = x.Shape[1];
@@ -856,18 +856,18 @@ namespace cstorchcl.compiler
             int totalGates = 4 * hiddenSize;
 
             int[] outputShape = new int[] { batchSize, seqLen, hiddenSize };
-            Tensor hOut = new Tensor(outputShape, _computeCtx.Context, "lstm_hout",MemoryFlags.ReadWrite, requiresGrad: x.RequiresGrad);
+            Tensor hOut = new Tensor(outputShape, _computeCtx.Context, $"lstm_hout_{layerId}",MemoryFlags.ReadWrite, requiresGrad: x.RequiresGrad);
  CommandQueue activeQueue = DeviceQueueRegistry.GetCurrent();
             long workspaceBytes = (long)seqLen * batchSize * 5 * hiddenSize * sizeof(float);
             //  workspace = _computeCtx.Context.CreateBuffer(MemoryFlags.ReadWrite, workspaceBytes);
-            workspace = OpenCLBufferManager.GetOrCreateBuffer(activeQueue.Context, "lstm_workbuffer", workspaceBytes);
+            workspace = OpenCLBufferManager.GetOrCreateBuffer(activeQueue.Context, $"lstm_ws_{w.TensorID}_{layerId}", workspaceBytes);
             // Временные буферы берем из вашего OpenCLBufferManager
             long xwBytes = (long)totalTokens * totalGates * sizeof(float);
             long tempBufferBytes = (long)batchSize * hiddenSize * sizeof(float);
 
-            NOpenCL.Buffer xwBuf = OpenCLBufferManager.GetOrCreateBuffer(_computeCtx.Context, "lstm_fwd_xw", xwBytes);
-            NOpenCL.Buffer cCurrBuf = OpenCLBufferManager.GetOrCreateBuffer(_computeCtx.Context, "lstm_fwd_c_curr", tempBufferBytes);
-            NOpenCL.Buffer hCurrBuf = OpenCLBufferManager.GetOrCreateBuffer(_computeCtx.Context, "lstm_fwd_h_curr", tempBufferBytes);
+            NOpenCL.Buffer xwBuf = OpenCLBufferManager.GetOrCreateBuffer(_computeCtx.Context, $"lstm_fwd_xw_{layerId}", xwBytes);
+            NOpenCL.Buffer cCurrBuf = OpenCLBufferManager.GetOrCreateBuffer(_computeCtx.Context, $"lstm_fwd_c_curr_{layerId}", tempBufferBytes);
+            NOpenCL.Buffer hCurrBuf = OpenCLBufferManager.GetOrCreateBuffer(_computeCtx.Context, $"lstm_fwd_h_curr_{layerId}", tempBufferBytes);
 
            
 
@@ -914,8 +914,12 @@ namespace cstorchcl.compiler
             _kernelLstmRecurrentForward.Arguments[argIdx2++].SetValue(u.DataBuffer);
             _kernelLstmRecurrentForward.Arguments[argIdx2++].SetValue(hOut.DataBuffer);
             _kernelLstmRecurrentForward.Arguments[argIdx2++].SetValue(workspace);
-            //_kernelLstmRecurrentForward.Arguments[argIdx2++].SetValue(cCurrBuf);
-            //_kernelLstmRecurrentForward.Arguments[argIdx2++].SetValue(hCurrBuf);
+            _kernelLstmRecurrentForward.Arguments[argIdx2++].SetValue(cCurrBuf);
+            _kernelLstmRecurrentForward.Arguments[argIdx2++].SetValue(hCurrBuf);
+  long ctrlBytes = (long)batchSize * sizeof(int);
+    NOpenCL.Buffer ctrlBuf = OpenCLBufferManager.GetOrCreateBuffer(_computeCtx.Context, "lstm_sync_controller", ctrlBytes);
+            OpenCLBufferFiller.FillZero(ctrlBuf, ctrlBytes);
+            _kernelLstmRecurrentForward.Arguments[argIdx2++].SetValue(ctrlBuf);
             _kernelLstmRecurrentForward.Arguments[argIdx2++].SetValue(batchSize);
             _kernelLstmRecurrentForward.Arguments[argIdx2++].SetValue(seqLen);
             _kernelLstmRecurrentForward.Arguments[argIdx2++].SetValue(hiddenSize);
@@ -923,19 +927,31 @@ namespace cstorchcl.compiler
              maxWg = (int)_computeCtx.MAX_WORK_GROUP_SIZE;
             int wgSizeX = Math.Min(maxWg, ((hiddenSize + 31) / 32) * 32);
 
+            // Настройка запуска K групп на каждый батч (например, K = 4 блока по 256 потоков = 1024 потока на батч)
+            const int WG_SIZE_X = 256;
+            int blocksPerBatch = Math.Min(4, (hiddenSize + WG_SIZE_X - 1) / WG_SIZE_X);
+            if (blocksPerBatch < 1) blocksPerBatch = 1;
+
+             globalX = blocksPerBatch * WG_SIZE_X;
+          
+
+        
+
+            // Передаем ctrlBuf в аргументы ядра и запускаем сетку [blocksPerBatch * 256, 1, batchSize]
             activeQueue.EnqueueNDRangeKernel(
                 _kernelLstmRecurrentForward,
-                new IntPtr[] { (IntPtr)wgSizeX, (IntPtr)1, (IntPtr)batchSize },
-                new nint[] { (IntPtr)wgSizeX, (IntPtr)1, (IntPtr)1 }
+                new IntPtr[] { (IntPtr)globalX, (IntPtr)1, (IntPtr)batchSize },
+                new nint[] { (IntPtr)WG_SIZE_X, (IntPtr)1, (IntPtr)1 }
             );
+
 
             //activeQueue.Finish();
 
             // Примечание: Creator привязывается в LSTM.Forward, здесь дублировать не нужно, если вызывается оттуда.
             return hOut;
         }
-        private static float[] ZeroBuf = null;
-        public Tensor LstmBackward(Tensor gradOutput, Tensor x, Tensor w, Tensor u, Tensor bias, Tensor hOut, NOpenCL.Buffer workspace)
+     
+        public Tensor LstmBackward(Tensor gradOutput, Tensor x, Tensor w, Tensor u, Tensor bias, Tensor hOut, NOpenCL.Buffer workspace,string layerId)
         {
           
             int batchSize = x.Shape[0];
@@ -946,7 +962,7 @@ namespace cstorchcl.compiler
             int totalTokens = batchSize * seqLen;
             int totalGates = 4 * hiddenSize;
 
-            Tensor gradX = new Tensor(x.Shape, _computeCtx.Context, "lstmbackward_gradx",MemoryFlags.ReadWrite, requiresGrad: false);
+            Tensor gradX = new Tensor(x.Shape, _computeCtx.Context, $"lstmbackward_gradx_{layerId}",MemoryFlags.ReadWrite, requiresGrad: false);
             w.InitGradient(_computeCtx.Context);
             u.InitGradient(_computeCtx.Context);
             bias.InitGradient(_computeCtx.Context);
@@ -957,9 +973,9 @@ namespace cstorchcl.compiler
             long tempBufBytes = (long)batchSize * hiddenSize * sizeof(float);
             long allGatesBytes = (long)totalTokens * totalGates * sizeof(float);
 
-            NOpenCL.Buffer dhNextBuf = OpenCLBufferManager.GetOrCreateBuffer(_computeCtx.Context, "lstm_bwd_dh_next", tempBufBytes);
-            NOpenCL.Buffer dcNextBuf = OpenCLBufferManager.GetOrCreateBuffer(_computeCtx.Context, "lstm_bwd_dc_next", tempBufBytes);
-            NOpenCL.Buffer allGradGatesBuf = OpenCLBufferManager.GetOrCreateBuffer(_computeCtx.Context, "lstm_bwd_all_grad_gates", allGatesBytes);
+            NOpenCL.Buffer dhNextBuf = OpenCLBufferManager.GetOrCreateBuffer(_computeCtx.Context, $"lstm_bwd_dh_next_{layerId}", tempBufBytes);
+            NOpenCL.Buffer dcNextBuf = OpenCLBufferManager.GetOrCreateBuffer(_computeCtx.Context, $"lstm_bwd_dc_next_{layerId}", tempBufBytes);
+            NOpenCL.Buffer allGradGatesBuf = OpenCLBufferManager.GetOrCreateBuffer(_computeCtx.Context, $"lstm_bwd_all_grad_gates_{layerId}", allGatesBytes);
 
             // =========================================================================
             // ЭТАП 1: Рекуррентный BPTT (считает all_grad_gates и dh_next)
@@ -983,15 +999,22 @@ namespace cstorchcl.compiler
                 _kernelLstmRecurrentBackward.Arguments[a1++].SetValue(dhNextBuf);
                 _kernelLstmRecurrentBackward.Arguments[a1++].SetValue(dcNextBuf);
             }
-     
+            long ctrlBytes = (long)batchSize * sizeof(int);
+            NOpenCL.Buffer ctrlBuf = OpenCLBufferManager.GetOrCreateBuffer(_computeCtx.Context, "lstm_sync_controller", ctrlBytes);
+            OpenCLBufferFiller.FillZero(ctrlBuf, ctrlBytes);
+            _kernelLstmRecurrentBackward.Arguments[a1++].SetValue(ctrlBuf);
             _kernelLstmRecurrentBackward.Arguments[a1++].SetValue(batchSize);
             _kernelLstmRecurrentBackward.Arguments[a1++].SetValue(seqLen);
             _kernelLstmRecurrentBackward.Arguments[a1++].SetValue(hiddenSize);
+            const int WG_SIZE_X = 256;
+            int blocksPerBatch = Math.Min(4, (hiddenSize + WG_SIZE_X - 1) / WG_SIZE_X);
+            if (blocksPerBatch < 1) blocksPerBatch = 1;
 
+          int  globalX = blocksPerBatch * WG_SIZE_X;
             activeQueue.EnqueueNDRangeKernel(
                 _kernelLstmRecurrentBackward,
-                new IntPtr[] { (IntPtr)batchSize, (IntPtr)wgSizeY },
-                new [] { (IntPtr)1, (IntPtr)wgSizeY }
+              new IntPtr[] { (IntPtr)globalX, (IntPtr)1, (IntPtr)batchSize },
+                new nint[] { (IntPtr)WG_SIZE_X, (IntPtr)1, (IntPtr)1 }
             );
 
             // =========================================================================

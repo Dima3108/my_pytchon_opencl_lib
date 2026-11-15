@@ -1,6 +1,7 @@
 ﻿using cstorchcl.compiler;
 using cstorchcl.core;
 using cstorchcl.optimizers;
+using cstorchcl.serialization;
 using NOpenCL;
 using System;
 using System.Collections.Generic;
@@ -29,12 +30,12 @@ namespace cstorchcl.tests
             NnClGlob clGlob = new NnClGlob(computeCtx);
 
             // Инициализация модели
-            var model = new EncoderDecoderNetwork(computeCtx, clGlob, encoderHiddenDim, batchSize);
+            var model = new EncoderDecoderNetwork(computeCtx, clGlob, encoderHiddenDim, batchSize,vocabSize);
 
             // ИСПРАВЛЕНИЕ 1: Создаем тензоры весов эмбеддингов прямо в коде теста
             int[] embShape = { vocabSize, encoderHiddenDim };
-            Tensor embeddingWeightsEncoder = new Tensor(embShape, context,"embed_encoder_weight", MemoryFlags.ReadWrite, requiresGrad: true);
-            Tensor embeddingWeightsDecoder = new Tensor(embShape, context,"embed_decoder_weigth", MemoryFlags.ReadWrite, requiresGrad: true);
+            //Tensor embeddingWeightsEncoder = new Tensor(embShape, context,"embed_encoder_weight", MemoryFlags.ReadWrite, requiresGrad: true);
+           // Tensor embeddingWeightsDecoder = new Tensor(embShape, context,"embed_decoder_weigth", MemoryFlags.ReadWrite, requiresGrad: true);
             float[] initW = new float[vocabSize * encoderHiddenDim];
             Random r = new Random();
             float bound = (float)(Math.Sqrt(6.0) / Math.Sqrt(vocabSize));
@@ -44,27 +45,28 @@ namespace cstorchcl.tests
             // ... (код заполнения опущен для краткости)
             unsafe
             {
-                fixed (float* _t = initW)
+               /* fixed (float* _t = initW)
                 {
                     queue.EnqueueWriteBuffer(embeddingWeightsEncoder.DataBuffer, true, 0, sizeof(float) * initW.Length, (IntPtr)_t);
                     queue.EnqueueWriteBuffer(embeddingWeightsDecoder.DataBuffer, true, 0, sizeof(float) * initW.Length, (IntPtr)_t);
                     queue.Finish();
-                }
+                }*/
             }
             // Настраиваем список оптимизатора параметров
             List<Tensor> parameters = new List<Tensor>();
 
             // ДОБАВЛЯЕМ ТЕНЗОРЫ ЭМБЕДДИНГОВ В ОПТИМИЗАТОР
-            parameters.Add(embeddingWeightsEncoder);
-            parameters.Add(embeddingWeightsDecoder);
+            // parameters.Add(embeddingWeightsEncoder);
+            // parameters.Add(embeddingWeightsDecoder);
 
             // Добавляем веса остальных слоев
+            parameters.AddRange(model.GetParameters());
             parameters.AddRange(model.EncoderLstm.GetParameters());
             parameters.AddRange(model.DecoderLstm.GetParameters());
             parameters.AddRange(model.FullyConnectedOut.GetParameters());
 
                 //mockLossTarget.Dispose();
-            Adam optimizer = new Adam(computeCtx,parameters, lr: 1e-4f);
+            Adam optimizer = new Adam(computeCtx,parameters, lr: 1e-3f);
 
             using var dataLoader = new StreamDataLoader(datasetPath, batchSize, blockTokens,context,queue.Device);
 
@@ -72,8 +74,9 @@ namespace cstorchcl.tests
             Console.WriteLine("----------------------------------------------------------------");
             //var encInputBuf = context.CreateBuffer(MemoryFlags.ReadOnly, sizeof(int) * blockTokens * batchSize);
             //var decTargetBuf= context.CreateBuffer(MemoryFlags.ReadOnly, sizeof(int) * blockTokens * batchSize);
-            int BATCH_COUNT = 7;
+            int BATCH_COUNT = 500;
             double sred_inter = 0;
+            IntPtr pL = HostPtrBufferManager.GetOrCreateBuffer("loss1", sizeof(float));
             for (int batchIdx = 0; batchIdx < BATCH_COUNT; batchIdx++)
             {
                 Stopwatch batchTimer = Stopwatch.StartNew();
@@ -87,7 +90,7 @@ namespace cstorchcl.tests
                 // ... [Внутри обучающего цикла] ...
 
                 // Прямой проход сети — получаем полные логиты [Batch, SeqLen, VocabSize]
-                Tensor logits = model.Forward(encInputBuf, decTargetBuf, embeddingWeightsEncoder, embeddingWeightsDecoder, blockTokens, batchSize);
+                Tensor logits = model.Forward(encInputBuf, decTargetBuf,  blockTokens, batchSize);
 
                 // Подготавливаем One-Hot мишень со сдвигом [Batch, SeqLen - 1, VocabSize] на основе первого ядра
                 //Tensor trueLossTarget = clGlob.PrepareTrueTargets(decTargetBuf, batchSize, blockTokens, vocabSize);
@@ -106,11 +109,11 @@ namespace cstorchcl.tests
 
 
                 //  float[] lossValue = new float[1];
-                IntPtr pL = HostPtrBufferManager.GetOrCreateBuffer("loss1", sizeof(float));
+               
                 unsafe
                 {
                     //fixed (float* pL = lossValue)
-
+                    if(batchIdx+1%50==0)
                         queue.EnqueueReadBuffer(loss.DataBuffer, true, 0, sizeof(float), (IntPtr)pL);
                 }
                 //queue.Finish();
@@ -126,8 +129,8 @@ namespace cstorchcl.tests
                 {
                     sred_inter += batchTimer.Elapsed.TotalSeconds;
                 }
-
-                unsafe
+                if (BATCH_COUNT + 1 % 50 == 0)
+                    unsafe
                 {
                     Console.WriteLine($"Батч {batchIdx + 1:D2}/{BATCH_COUNT} | MSE Loss: {((float*)pL)[0]:F6} | Скорость: {tokensPerSecond:F0} токенов/сек({1 / batchTimer.Elapsed.TotalSeconds} it/s)");
 
@@ -142,6 +145,19 @@ namespace cstorchcl.tests
             Console.WriteLine($"средняя скорость обработки:{1/sred_inter} it/s");
             Console.WriteLine("----------------------------------------------------------------");
             Console.WriteLine("Эксперимент успешно выполнен!");
+            // Собираем метаданные (необязательно, но полезно для совместимости с HuggingFace)
+            var meta = new Dictionary<string, string>
+{
+    { "format", "pt" },
+    { "framework", "cstorchcl" },
+    { "vocab_size", vocabSize.ToString() },
+    { "hidden_dim", encoderHiddenDim.ToString() }
+};
+
+            // Сохраняем все параметры, которые передавали в Adam
+            SafeTensorsSerializer.Save("encoder_decoder_model.safetensors", parameters, meta);
+            Console.WriteLine("Веса модели успешно сохранены в safetensors!");
+
             OpenCLBufferManager.DisposeAll();
             cstorchcl.compiler.HostPtrBufferManager.DisposeAll();
         }

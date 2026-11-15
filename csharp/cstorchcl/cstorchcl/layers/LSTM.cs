@@ -33,23 +33,23 @@ namespace cstorchcl.layers
 
         private readonly int _inFeatures;
         private readonly int _hiddenSize;
-
+       // public string LAYER_ID { get; }
         /// <summary>
         /// Инициализирует слой LSTM и заполняет его веса методами Xavier/Glorot.
         /// </summary>
-        public LSTM(ComputeContext computeContext, NnClGlob nnClGlob, int inFeatures, int hiddenSize)
-            : base(computeContext, nnClGlob)
+        public LSTM(ComputeContext computeContext, NnClGlob nnClGlob, int inFeatures, int hiddenSize,string layerId)
+            : base(computeContext, nnClGlob,layerId)
         {
             _inFeatures = inFeatures;
             _hiddenSize = hiddenSize;
 
             int totalGateFeatures = 4 * _hiddenSize;
-
+           
             // 1. Аллокация памяти во VRAM девайса с флагом RequiresGrad = true
-            WeightW = RegisterParameter(new[] { 1, _inFeatures, totalGateFeatures }, requiresGrad: true);
-            WeightU = RegisterParameter(new[] { 1, _hiddenSize, totalGateFeatures }, requiresGrad: true);
-            Bias = RegisterParameter(new[] { 1, totalGateFeatures }, requiresGrad: true);
-
+            WeightW = RegisterParameter(new[] { 1, _inFeatures, totalGateFeatures }, requiresGrad: true,tenosr_name:nameof(WeightW));
+            WeightU = RegisterParameter(new[] { 1, _hiddenSize, totalGateFeatures }, requiresGrad: true,tenosr_name:nameof(WeightU));
+            Bias = RegisterParameter(new[] { 1, totalGateFeatures }, requiresGrad: true,tenosr_name:nameof(Bias));
+            
             // 2. Инициализация весов на CPU и пересылка во VRAM
             InitializeWeights();
         }
@@ -69,19 +69,19 @@ namespace cstorchcl.layers
 
             // Вызываем метод из NnClGlob, который аллоцирует выходной тензор H и возвращает нам GPU-буфер workspace
             NOpenCL.Buffer workspaceBuf;
-            Tensor outputH = NnClGlob.Lstm(x, WeightW, WeightU, Bias, _hiddenSize, out workspaceBuf);
+            Tensor outputH = NnClGlob.Lstm(x, WeightW, WeightU, Bias, _hiddenSize, out workspaceBuf,LAYER_ID);
 
             // Если включен режим Autograd и требуется расчет градиента, привязываем операцию к выходу
             if (outputH.RequiresGrad)
             {
                 // Передаем все входы, выход и низкоуровневый буфер в узел графа
-                outputH.Creator = new LstmOp(x, WeightW, WeightU, Bias, outputH, workspaceBuf, NnClGlob);
+                outputH.Creator = new LstmOp(x, WeightW, WeightU, Bias, outputH, workspaceBuf, NnClGlob,LAYER_ID);
             }
             else
             {
                 // Если мы в режиме инференса (RequiresGrad = false), workspace нам больше не нужен,
                 // и так как граф его не подберет, освобождаем буфер немедленно.
-                workspaceBuf.Dispose();
+                //workspaceBuf.Dispose();
             }
 
             return outputH;

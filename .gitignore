@@ -1,1 +1,3 @@
 fulldataset.bin
+*.safetensors
+*.json

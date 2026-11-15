@@ -5,6 +5,7 @@ using cstorchcl.core;
 using cstorchcl.compiler;
 using Buffer = NOpenCL.Buffer;
 using cstorchcl.extensions;
+using System.Collections.Immutable;
 namespace cstorchcl.optimizers
 {
     /// <summary>
@@ -91,8 +92,8 @@ namespace cstorchcl.optimizers
                     long bytesSize = (long)size * sizeof(float);
 
                     string keySuffix = param.TensorID ?? param.GetHashCode().ToString();
-                    Buffer mBuf = OpenCLBufferManager.GetOrCreateBuffer(queue.Context, $"adam_m_{i++}", bytesSize);
-                    Buffer vBuf = OpenCLBufferManager.GetOrCreateBuffer(queue.Context, $"adam_v_{i++}", bytesSize);
+                    Buffer mBuf = OpenCLBufferManager.GetOrCreateBuffer(queue.Context, $"adam_m_{i++}_{param.TensorID}", bytesSize);
+                    Buffer vBuf = OpenCLBufferManager.GetOrCreateBuffer(queue.Context, $"adam_v_{i++}_{param.TensorID}", bytesSize);
                     // Синхронно обнуляем буферы на устройстве
                     unsafe
                     {

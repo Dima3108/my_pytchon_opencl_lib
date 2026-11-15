@@ -14,7 +14,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("LSTMTest")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Debug")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+766a5bebd19de0e617bb5fd07f663aed4caeabc9")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+fa176b5bbf2db369d9173bf9e24457bfc5a4be7a")]
 [assembly: System.Reflection.AssemblyProductAttribute("LSTMTest")]
 [assembly: System.Reflection.AssemblyTitleAttribute("LSTMTest")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]

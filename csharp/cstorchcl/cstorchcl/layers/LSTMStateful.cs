@@ -23,8 +23,8 @@ namespace cstorchcl.core
         private readonly int _batchSize;
         private bool _isStateInitialized = false;
 
-        public LSTMStateful(ComputeContext computeContext, NnClGlob nnClGlob, int batchSize, int inFeatures, int hiddenSize)
-            : base(computeContext, nnClGlob)
+        public LSTMStateful(ComputeContext computeContext, NnClGlob nnClGlob, int batchSize, int inFeatures, int hiddenSize,string layerId)
+            : base(computeContext, nnClGlob,layerId)
         {
             _batchSize = batchSize;
             _inFeatures = inFeatures;
@@ -33,9 +33,9 @@ namespace cstorchcl.core
             int totalGateFeatures = 4 * _hiddenSize;
 
             // 1. Выделение памяти под обучаемые параметры (веса гейтов)
-            WeightW = RegisterParameter(new[] { 1, _inFeatures, totalGateFeatures }, requiresGrad: true);
-            WeightU = RegisterParameter(new[] { 1, _hiddenSize, totalGateFeatures }, requiresGrad: true);
-            Bias = RegisterParameter(new[] { 1, totalGateFeatures }, requiresGrad: true);
+            WeightW = RegisterParameter(new[] { 1, _inFeatures, totalGateFeatures }, requiresGrad: true,tenosr_name:nameof(WeightW));
+            WeightU = RegisterParameter(new[] { 1, _hiddenSize, totalGateFeatures }, requiresGrad: true,tenosr_name:nameof(WeightU));
+            Bias = RegisterParameter(new[] { 1, totalGateFeatures }, requiresGrad: true,tenosr_name:nameof(Bias));
 
             // 2. Выделение памяти под скрытые состояния (пока заполняем нулями)
             ResetStates();

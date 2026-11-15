@@ -26,23 +26,34 @@ namespace cstorchcl.core
         private readonly List<Tensor> _parameters = new List<Tensor>();
 
         private bool _isDisposed = false;
-
+        public string LAYER_ID { get; }
         /// <summary>
         /// Инициализирует модель, привязывая её к контексту вычислений.
         /// </summary>
-        protected NeuralNetwork(ComputeContext computeContext, NnClGlob nnClGlob)
+        protected NeuralNetwork(ComputeContext computeContext, NnClGlob nnClGlob,string layer_id)
         {
             ComputeContext = computeContext ?? throw new ArgumentNullException(nameof(computeContext));
             NnClGlob = nnClGlob ?? throw new ArgumentNullException(nameof(nnClGlob));
+            LAYER_ID = layer_id;
         }
 
         /// <summary>
         /// Регистрирует тензор как обучаемый параметр модели.
         /// </summary>
-        protected Tensor RegisterParameter(int[] shape, bool requiresGrad = true)
+        protected Tensor RegisterParameter(int[] shape,string tenosr_name, bool requiresGrad = true)
         {
             // Параметры модели изначально создаются с флагом RequiresGrad = true
-            var param = new Tensor(shape, ComputeContext.Context,$"neuronetwork_paramtensor_lev{param_lev++}" ,NOpenCL.MemoryFlags.ReadWrite, requiresGrad);
+            string tid= LAYER_ID;
+            if (tenosr_name != "")
+            {
+                tid += "." + tenosr_name;
+            }
+            else
+            {
+                tid += "." + $"neuronetwork_paramtensor_lev{param_lev}";
+            }
+            param_lev++;
+            var param = new Tensor(shape, ComputeContext.Context,tid ,NOpenCL.MemoryFlags.ReadWrite, requiresGrad);
             _parameters.Add(param);
             return param;
         }
@@ -63,21 +74,22 @@ namespace cstorchcl.core
                 if (param.Grad != null)
                 {
                     // Создаем временный хост-массив нулей для очистки буфера градиента
-                    float[] zeroPattern = new float[param.Grad.Size];
+                    /*float[] zeroPattern = new float[param.Grad.Size];
                     for (int i = 0; i < zeroPattern.Length; i++)
-                        zeroPattern[i] = 0;
+                        zeroPattern[i] = 0;*/
                     long sizeInBytes = (long)param.Grad.Size * sizeof(float);
-                    unsafe
+                    /*unsafe
                     {
                         fixed(float* zp = zeroPattern)
                         {
-queue.EnqueueWriteBuffer(param.Grad.DataBuffer, true, 0, sizeInBytes, (IntPtr)zp);
+                            queue.EnqueueWriteBuffer(param.Grad.DataBuffer, true, 0, sizeInBytes, (IntPtr)zp);
                         }
-                    }
+                    }*/
+                    OpenCLBufferFiller.FillZero(param.Grad.DataBuffer, sizeInBytes);
                     
                 }
             }
-            queue.Finish();
+            //queue.Finish();
 
             // Также очищаем хранилище промежуточных контекстов слоев LIFO
             GradientStorage.Clear();

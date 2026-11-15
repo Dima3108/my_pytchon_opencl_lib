@@ -26,17 +26,17 @@ namespace cstorchcl.core
         /// <summary>
         /// Инициализирует линейный слой и заполняет его веса случайным шумом для разрушения симметрии.
         /// </summary>
-        public Linear(ComputeContext computeContext, NnClGlob nnClGlob, int inFeatures, int outFeatures)
-            : base(computeContext, nnClGlob)
+        public Linear(ComputeContext computeContext, NnClGlob nnClGlob, int inFeatures, int outFeatures,string layerId)
+            : base(computeContext, nnClGlob,layerId)
         {
             _inFeatures = inFeatures;
             _outFeatures = outFeatures;
 
             // 1. Аллокация памяти во VRAM девайса
             // Веса делаем 3D формы [1, K, N] под требования нашего пакетного ядра BMM
-            Weight = RegisterParameter(new[] { 1, inFeatures, outFeatures }, requiresGrad: true);
+            Weight = RegisterParameter(new[] { 1, inFeatures, outFeatures }, requiresGrad: true,tenosr_name:nameof(Weight));
             // Bias делаем 2D формы [1, OutFeatures] под требования Broadcasting
-            Bias = RegisterParameter(new[] { 1, outFeatures }, requiresGrad: true);
+            Bias = RegisterParameter(new[] { 1, outFeatures }, requiresGrad: true,tenosr_name:nameof(Bias));
 
             // 2. Инициализация весов методом Ксавье (Xavier/Glorot Initialization)
             // Это стандарт глубокого обучения, предохраняющий tanh от насыщения и зануления градиентов

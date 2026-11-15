@@ -34,7 +34,8 @@ namespace cstorchcl.core
             Tensor bias,
             Tensor output,
             NOpenCL.Buffer workspaceBuf,
-            NnClGlob nnClGlob)
+            NnClGlob nnClGlob,
+            string layerId)
         {
             // Регистрируем входы операции для корректного обхода графа методом BuildTopo
             // Порядок в массиве важен для однозначного сопоставления градиентов в Backward
@@ -43,8 +44,9 @@ namespace cstorchcl.core
 
             _workspaceBuf = workspaceBuf ?? throw new ArgumentNullException(nameof(workspaceBuf));
             _nnClGlob = nnClGlob ?? throw new ArgumentNullException(nameof(nnClGlob));
+            LayerId = layerId;
         }
-
+        private string LayerId;
         /// <summary>
         /// Вычисляет градиент функции ошибки по входам операции (BPTT).
         /// Накапливает градиенты по параметрам весов и смещений атомарно на GPU.
@@ -65,7 +67,7 @@ namespace cstorchcl.core
 
             // Запускаем монолитное Си-ядро обратного прохода LSTM (BPTT)
             // Оно вернет gradX и атомарно внутри VRAM обновит буферы weightW.Grad и weightU.Grad
-            Tensor gradX = _nnClGlob.LstmBackward(gradOutput, x, weightW, weightU,bias, Output, _workspaceBuf);
+            Tensor gradX = _nnClGlob.LstmBackward(gradOutput, x, weightW, weightU,bias, Output, _workspaceBuf,LayerId);
 
             // Освобождаем промежуточный буфер гейтов сразу после вычисления градиентов.
             // Он больше не понадобится в текущей эпохе обучения.
