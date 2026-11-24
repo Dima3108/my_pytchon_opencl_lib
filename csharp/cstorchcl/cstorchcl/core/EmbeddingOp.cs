@@ -16,7 +16,7 @@ namespace cstorchcl.core
         /// <summary>
         /// Создает узел операции Embedding в графе вычислений.
         /// </summary>
-        public EmbeddingOp(NOpenCL.Buffer xTokensBuf, Tensor weight, Tensor output, int totalTokens, NnClGlob nnClGlob)
+        public EmbeddingOp(NOpenCL.Buffer xTokensBuf, Tensor weight, Tensor output, int totalTokens, NnClGlob nnClGlob,string layerId)
         {
             // У операции один дифференцируемый вход — матрица весов (Weight)
             Inputs = new[] { weight };
@@ -25,8 +25,9 @@ namespace cstorchcl.core
             _xTokensBuf = xTokensBuf ?? throw new ArgumentNullException(nameof(xTokensBuf));
             _totalTokens = totalTokens;
             _nnClGlob = nnClGlob ?? throw new ArgumentNullException(nameof(nnClGlob));
+            Lid = layerId;
         }
-
+        private string Lid;
         /// <summary>
         /// Вычисляет градиент функции ошибки по матрице весов Embedding.
         /// </summary>
@@ -40,7 +41,7 @@ namespace cstorchcl.core
             if (weight.RequiresGrad)
             {
                 // Запускаем Си-ядро обратного прохода с атомарным сложением на GPU
-                gradWeight = _nnClGlob.EmbeddingBackward(gradOutput, _xTokensBuf, weight, _totalTokens);
+                gradWeight = _nnClGlob.EmbeddingBackward(gradOutput, _xTokensBuf, weight, _totalTokens,Lid);
             }
 
             // Возвращаем массив градиентов по количеству входов в Inputs (в данном случае один элемент)

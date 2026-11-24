@@ -3,6 +3,7 @@ using NOpenCL;
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Xml.Linq;
 
 namespace cstorchcl.core
 {
@@ -54,7 +55,12 @@ namespace cstorchcl.core
             // Заполняем буфер единицей. В OpenCL это делается через очередь, 
             // но для базовой логики графа считаем, что буфер target.Grad.DataBuffer готов.
             // (В будущем вызовем activeQueue.EnqueueFillBuffer)
-
+            var queue = DeviceQueueRegistry.GetCurrent();
+            unsafe
+            {
+                float one = 1.0f;
+                queue.EnqueueWriteBuffer(target.Grad.DataBuffer, true, 0, sizeof(float), (IntPtr)(&one));
+            }
             // 2. Строим топологический порядок узлов графа вычислений (от выходов к входам)
             List<Tensor> topoOrder = new List<Tensor>();
             HashSet<Tensor> visited = new HashSet<Tensor>();
@@ -76,6 +82,26 @@ namespace cstorchcl.core
             }
 
             BuildTopo(target);
+            // ИСПРАВЛЕНИЕ: Обнуляем старые буферы градиентов у всех промежуточных узлов графа
+            // (оставляя нетронутыми листовые параметры модели для возможности gradient accumulation)
+ var cont_ = DeviceQueueRegistry.GetCurrent().Context;
+            foreach (var node in topoOrder)
+            {
+                if (node.Creator != null && node != target)
+                {
+                    if (node.Grad != null)
+                    {
+                        OpenCLBufferFiller.FillZero(node.Grad.DataBuffer, (long)node.Grad.Size * sizeof(float));
+                    }
+                    else
+                    {
+
+                        if (node.RequiresGrad || node.Grad == null)
+                            node.InitGradient(cont_);
+                    }
+                }
+            }
+
 
             // Разворачиваем список, чтобы идти строго в обратном порядке (от Loss назад к весам)
             topoOrder.Reverse();
@@ -144,7 +170,7 @@ HostReturner.PrintTensor(input, "sum_grad", true);
 
             kernel.Arguments[0].SetValue(targetGrad.DataBuffer);
             kernel.Arguments[1].SetValue(newGrad.DataBuffer);
-            int lc = 32;
+            int lc = 256;
             while (targetGrad.Size % lc > 0)
                 lc--;
             // Запускаем параллельное сложение по всей длине буфера градиента

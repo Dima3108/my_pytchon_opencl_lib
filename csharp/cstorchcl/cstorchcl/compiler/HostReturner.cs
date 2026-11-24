@@ -124,21 +124,21 @@ queue.EnqueueReadBuffer(tensor.Grad.DataBuffer, true, 0, sizeInBytes, (IntPtr)hg
 
             if (array.Length <= maxElementsToShow)
             {
-                Console.WriteLine($"  [{string.Join(", ", array.Select(x => x.ToString("F4")))}]");
+                Console.WriteLine($"  [{string.Join(", ", array.Select(x => x.ToString("F4").Replace(",",".")))}]");
             }
             else
             {
                 var sb = new StringBuilder();
                 sb.Append("  [");
                 // Первые 3 элемента
-                for (int i = 0; i < 3; i++) sb.Append(array[i].ToString("F4") + ", ");
+                for (int i = 0; i < 3; i++) sb.Append(array[i].ToString("F4").Replace(",",".") + ", ");
 
                 sb.Append("... , ");
 
                 // Последние 3 элемента
                 for (int i = array.Length - 3; i < array.Length; i++)
                 {
-                    sb.Append(array[i].ToString("F4"));
+                    sb.Append(array[i].ToString("F4").Replace(",", "."));
                     if (i < array.Length - 1) sb.Append(", ");
                 }
                 sb.Append("]");

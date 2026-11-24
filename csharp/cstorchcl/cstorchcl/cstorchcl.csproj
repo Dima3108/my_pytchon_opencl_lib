@@ -30,6 +30,9 @@
     <None Update="cl_kernels\adam_step.cl">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </None>
+    <None Update="cl_kernels\add.cl">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </None>
     <None Update="cl_kernels\base_cl_functions.cl">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </None>
@@ -48,10 +51,16 @@
     <None Update="cl_kernels\cross_entropy.cl">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </None>
+    <None Update="cl_kernels\dropout.cl">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </None>
     <None Update="cl_kernels\elementwise_ops.cl">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </None>
     <None Update="cl_kernels\embedding.cl">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </None>
+    <None Update="cl_kernels\flash_attention.cl">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </None>
     <None Update="cl_kernels\FusedSparseCrossEntropyLoss.cl">
@@ -78,16 +87,28 @@
     <None Update="cl_kernels\RMSNorm.cl">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </None>
+    <None Update="cl_kernels\rwkv_ops.cl">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </None>
     <None Update="cl_kernels\slice_logits_3d.cl">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </None>
     <None Update="cl_kernels\Softmax.cl">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </None>
+    <None Update="cl_kernels\swiglu.cl">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </None>
     <None Update="cl_kernels\tensor_copy.cl">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </None>
     <None Update="cl_kernels\token_one_hot_shift.cl">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </None>
+    <None Update="cl_kernels\vision_ops.cl">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </None>
+    <None Update="cl_kernels\wkv.cl">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </None>
   </ItemGroup>

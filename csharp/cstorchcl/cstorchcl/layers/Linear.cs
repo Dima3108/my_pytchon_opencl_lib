@@ -22,7 +22,7 @@ namespace cstorchcl.core
 
         private readonly int _inFeatures;
         private readonly int _outFeatures;
-
+        private string Lid;
         /// <summary>
         /// Инициализирует линейный слой и заполняет его веса случайным шумом для разрушения симметрии.
         /// </summary>
@@ -34,9 +34,9 @@ namespace cstorchcl.core
 
             // 1. Аллокация памяти во VRAM девайса
             // Веса делаем 3D формы [1, K, N] под требования нашего пакетного ядра BMM
-            Weight = RegisterParameter(new[] { 1, inFeatures, outFeatures }, requiresGrad: true,tenosr_name:nameof(Weight));
+            Weight = RegisterParameter(new[] { 1, inFeatures, outFeatures }, requiresGrad: true,tenosr_name:layerId+"."+nameof(Weight));
             // Bias делаем 2D формы [1, OutFeatures] под требования Broadcasting
-            Bias = RegisterParameter(new[] { 1, outFeatures }, requiresGrad: true,tenosr_name:nameof(Bias));
+            Bias = RegisterParameter(new[] { 1, outFeatures }, requiresGrad: true,tenosr_name: layerId + "." + nameof(Bias));
 
             // 2. Инициализация весов методом Ксавье (Xavier/Glorot Initialization)
             // Это стандарт глубокого обучения, предохраняющий tanh от насыщения и зануления градиентов
@@ -71,7 +71,7 @@ namespace cstorchcl.core
 queue.EnqueueWriteBuffer(Bias.DataBuffer, true, 0, biasBytes, (IntPtr)hb);
                 }
             }
-            
+            Lid = layerId;
 
             queue.Finish();
         }
@@ -88,7 +88,7 @@ queue.EnqueueWriteBuffer(Bias.DataBuffer, true, 0, biasBytes, (IntPtr)hb);
             }
 
             // Единый монолитный вызов без промежуточных аллокаций и JIT-компиляции
-            return NnClGlob.LinearForward(x, Weight, Bias);
+            return NnClGlob.LinearForward(x, Weight, Bias,Lid);
         }
     }
 }

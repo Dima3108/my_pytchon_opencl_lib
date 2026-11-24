@@ -5,12 +5,13 @@ using NOpenCL;
 public class LinearOp : Op
 {
     private readonly NnClGlob _nnClGlob;
-
-    public LinearOp(Tensor x, Tensor w, Tensor bias, Tensor output, NnClGlob nnClGlob)
+    private string Lid;
+    public LinearOp(Tensor x, Tensor w, Tensor bias, Tensor output, NnClGlob nnClGlob,string layerId)
     {
         Inputs = new[] { x, w, bias };
         Output = output;
         _nnClGlob = nnClGlob ?? throw new ArgumentNullException(nameof(nnClGlob));
+        Lid = layerId;
     }
 
     public override Tensor[] Backward(Tensor gradOutput, Context context)
@@ -28,21 +29,21 @@ public class LinearOp : Op
         // 1. gradX = gradOutput * W^T (transB: true)
         if (x.RequiresGrad)
         {
-            gradX = _nnClGlob.BmmPermute(gradOutput, w, transA: false, transB: true);
+            gradX = _nnClGlob.BmmPermute(gradOutput, w, transA: false, transB: true,layerId:Lid+".bmm1");
         }
 
         // 2. gradW = Sum_Batch(X^T * gradOutput) (transA: true)
         if (w.RequiresGrad)
         {
-            using Tensor batchGradW = _nnClGlob.BmmPermute(x, gradOutput, transA: true, transB: false);
-            gradW = _nnClGlob.Sum(batchGradW, axis: 0, keepDims: true);
+            using Tensor batchGradW = _nnClGlob.BmmPermute(x, gradOutput, transA: true, transB: false,layerId:Lid+".bmm2");
+            gradW = _nnClGlob.Sum(batchGradW, axis: 0, keepDims: true,layerId:Lid+".sum");
             gradW.Creator = null;
         }
 
         // 3. gradBias
         if (bias.RequiresGrad)
         {
-            gradBias = _nnClGlob.LinearBiasBackward(gradOutput, bias.Shape);
+            gradBias = _nnClGlob.LinearBiasBackward(gradOutput, bias.Shape,Lid);
         }
 
         return new[] { gradX, gradW, gradBias };

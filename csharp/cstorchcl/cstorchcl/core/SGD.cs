@@ -50,5 +50,36 @@ namespace cstorchcl.core
             }
             queue.Finish();
         }
+        /// <summary>
+        /// Очищает накопленные градиенты у параметров (аналог zero_grad в PyTorch).
+        /// </summary>
+        public void ZeroGrad()
+        {
+            var queue = DeviceQueueRegistry.GetCurrent();
+            foreach (var param in _parameters)
+            {
+                if (param.Grad == null && !param.RequiresGrad) continue;
+                else if (param.Grad == null && param.RequiresGrad)
+                {
+                    param.InitGradient(queue.Context);
+                }
+                else
+                {
+                    // Обнуляем буфер градиента через хост-массив сил .NET
+                    //  float[] zeroPattern = new float[param.Grad.Size];
+                    long bytesSize = (long)param.Grad.Size * sizeof(float);
+                    unsafe
+                    {
+                        //  fixed (float* zPtr = zeroPattern)
+                        // float* zPtr = (float*)HostPtrBufferManager.GetOrCreateBuffer($"zeroBuffer{param.Grad.Size}",(int)bytesSize,0);
+                        {
+                            // queue.EnqueueWriteBuffer(param.Grad.DataBuffer, true, 0, bytesSize, (IntPtr)zPtr);
+                        }
+                        OpenCLBufferFiller.FillZero(param.Grad.DataBuffer, bytesSize);
+                    }
+                }
+            }
+            //queue.Finish();
+        }
     }
 }

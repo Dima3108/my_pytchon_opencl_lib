@@ -20,7 +20,7 @@ namespace cstorchcl.core
         /// <summary>
         /// Максимальный размер рабочей группы (X*Y*Z)
         /// </summary>
-        public int MAX_WORK_GROUP_SIZE { get; private set; }
+        public  int MAX_WORK_GROUP_SIZE { get; private set; }
         public int MAX_WORK_GPOUP_SIZE_X { get; private set; }
         public int MAX_WORK_GPOUP_SIZE_Y { get; private set; }
         private bool _isDisposed = false;

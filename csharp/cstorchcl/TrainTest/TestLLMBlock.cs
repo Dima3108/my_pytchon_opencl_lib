@@ -15,12 +15,12 @@ public class TestLLMBlock : NeuralNetwork
     public float[] ProjectedHost { get; private set; }
     public float[] ActivatedHost { get; private set; }
 
-    public TestLLMBlock(ComputeContext computeContext, NnClGlob nnClGlob, int dModel)
-        : base(computeContext, nnClGlob)
+    public TestLLMBlock(ComputeContext computeContext, NnClGlob nnClGlob, int dModel,string layerId)
+        : base(computeContext, nnClGlob,layerId)
     {
         // 1. Выделяем память во VRAM
-        RmsGamma = RegisterParameter(new[] { dModel });
-        ProjectionWeights = RegisterParameter(new[] { 1, dModel, dModel }); // [Batch, K, N]
+        RmsGamma = RegisterParameter(new[] { dModel },nameof(RmsGamma));
+        ProjectionWeights = RegisterParameter(new[] { 1, dModel, dModel },nameof(ProjectionWeights)); // [Batch, K, N]
 
         // 2. Чистая инициализация весов (без мусора VRAM)
         CommandQueue queue = DeviceQueueRegistry.GetCurrent();
@@ -56,7 +56,7 @@ queue.EnqueueWriteBuffer(ProjectionWeights.DataBuffer, true, 0, (long)Projection
     public Tensor Forward(Tensor x)
     {
         // 1. Глобальный слой нормализации
-        Tensor normalized = NnClGlob.RmsNorm(x, RmsGamma);
+        Tensor normalized = NnClGlob.RmsNorm(x, RmsGamma,"rsnorm");
         NormalizedHost = HostReturner.ToCpu(normalized); // Отладочный перехват
 
         // 2. Линейная проекция через пакетное умножение матриц

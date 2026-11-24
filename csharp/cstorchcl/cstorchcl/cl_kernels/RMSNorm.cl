@@ -96,3 +96,19 @@ __kernel void rmsnorm_backward(
         grad_input[idx] = common_scale * (d_model * grad_output[idx] * gamma[i] - X[idx] * projection_scale);
     }
 }
+// Суммирует матрицу частичных градиентов [num_rows, d_model] по строкам в вектор [d_model]
+__kernel void reduce_rows_sum(
+    __global const float* part,   // [num_rows, d_model]
+    __global float* out_vec,      // [d_model]
+    const int num_rows,
+    const int d_model)
+{
+    int col = get_global_id(0);
+    if (col >= d_model) return;
+
+    float sum = 0.0f;
+    for (int r = 0; r < num_rows; r++) {
+        sum += part[r * d_model + col];
+    }
+    out_vec[col] = sum;
+}

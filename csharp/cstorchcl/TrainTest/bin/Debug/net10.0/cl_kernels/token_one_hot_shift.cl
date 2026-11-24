@@ -3,22 +3,21 @@
  * Сетка запуска (Global Work Size): [BATCH_SIZE, SEQ_LEN - 1]
  */
 kernel void token_one_hot_shift(
-    global const int* tokens,          // Исходный буфер токенов [BATCH_SIZE, SEQ_LEN]
-    global float* destination,         // Выходной тензор мишени [BATCH_SIZE, SEQ_LEN - 1, VOCAB_SIZE]
+    global const int* tokens,      // [BATCH_SIZE, SEQ_LEN]
+    global float* destination,     // [BATCH_SIZE, SEQ_LEN - 1, VOCAB_SIZE]
     const int seq_len,
     const int vocab_size
 ) {
-    int b = get_global_id(0); // Индекс батча
-    int t = get_global_id(1); // Индекс шага времени (уже в диапазоне от 0 до SEQ_LEN - 2)
+    int v = get_global_id(0);      // [0 .. vocab_size - 1] -> быстрая ось!
+    int t = get_global_id(1);      // [0 .. seq_len - 2]
+    int b = get_global_id(2);      // [0 .. batch_size - 1]
 
-    // Применяем авторегрессионный сдвиг: берем токен из позиции t + 1 (эквивалент targets[:, 1:])
+    int target_seq_len = seq_len - 1;
+    if (v >= vocab_size || t >= target_seq_len) return;
+
     int token_idx = tokens[b * seq_len + (t + 1)];
+    int dest_offset = (b * target_seq_len + t) * vocab_size + v;
 
-    // Вычисляем базовое смещение в выходном 3D тензоре
-    int dest_row_offset = b * ((seq_len - 1) * vocab_size) + t * vocab_size;
-
-    // Заполняем строку вектора: на месте истинного токена ставим 1.0f, в остальных местах 0.0f
-    for (int v = 0; v < vocab_size; v++) {
-        destination[dest_row_offset + v] = (v == token_idx) ? 1.0f : 0.0f;
-    }
+    // Бесветвящийся выбор 1.0f на позиции истинного токена и 0.0f в остальных местах
+    destination[dest_offset] = select(0.0f, 1.0f, v == token_idx);
 }

@@ -4,11 +4,15 @@ using System.Linq;
 using NOpenCL;
 using cstorchcl.core;
 using cstorchcl.compiler;
+using cstorchcl.layers;
+using TrainTest;
 
 class Program
 {
     static void Main(string[] args)
     {
+        TransformerBlockTest._Main();
+        return;
         Console.WriteLine("=== ТЕСТИРОВАНИЕ ОБУЧАЕМОГО СЛОЯ LINEAR (OPENCL JIT) ===");
 
         try
@@ -33,13 +37,14 @@ class Program
             };
 
             // Инициализация тензоров данных
-            using var xTensor = new Tensor(inputData, new[] { batch, 1, inFeatures }, computeContext.Context, MemoryFlags.ReadWrite, requiresGrad: true);
-            using var targetTensor = new Tensor(targetData, new[] { batch, 1, outFeatures }, computeContext.Context, MemoryFlags.ReadWrite, requiresGrad: false);
+            //using var xTensor = new Tensor(new[] { batch, 1, inFeatures },inputData,computeContext.Context,"",   MemoryFlags.ReadWrite, requiresGrad: true);
+            using var xTensor = new Tensor(inputData, new[] { batch, 1, inFeatures }, computeContext.Context, "xTensor", requiresGrad: true);
+            using var targetTensor = new Tensor(targetData, new[] { batch, 1, outFeatures }, computeContext.Context, "targetTensor",MemoryFlags.ReadWrite, requiresGrad: false);
 
             var nnClGlob = new NnClGlob(computeContext);
 
             // 2. Создание нашего нового слоя Linear!
-            using var linearLayer = new Linear(computeContext, nnClGlob, inFeatures, outFeatures);
+            using var linearLayer = new Linear(computeContext, nnClGlob, inFeatures, outFeatures,"linear");
 
             // Передаем параметры слоя в оптимизатор SGD
             var optimizer = new SGD(linearLayer.GetParameters(), learningRate: 0.05f, computeContext);

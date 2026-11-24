@@ -42,10 +42,10 @@ namespace cstorchcl.tests
             for (int i = 0; i < hostX.Length; i++)
                 hostX[i] = (float)Math.Sin(i + 1.0); // Детерминированный шум
 
-            Tensor tensorX = new Tensor(hostX, xShape, openClContext, MemoryFlags.ReadWrite, requiresGrad: true);
+            Tensor tensorX = new Tensor(hostX, xShape, openClContext,"x_tensor", MemoryFlags.ReadWrite, requiresGrad: true);
             
             // 4. Инициализируем слой LSTM
-            LSTM lstmLayer = new LSTM(computeContext, nnClGlob, inFeatures, hiddenSize);
+            LSTM lstmLayer = new LSTM(computeContext, nnClGlob, inFeatures, hiddenSize,"lstm");
 
             Console.WriteLine("\n[Инициализация параметров слоев во VRAM]:");
             PrintTensorMetadata("WeightW", lstmLayer.WeightW);
@@ -199,11 +199,11 @@ namespace cstorchcl.tests
             }
 
             // 4. Аллокация тензоров данных во VRAM
-            Tensor inputX = new Tensor(inputsData, xShape, context, NOpenCL.MemoryFlags.ReadWrite, requiresGrad: !false);
-            Tensor target = new Tensor(targetData, targetShape, context, NOpenCL.MemoryFlags.ReadWrite, requiresGrad: !false);
+            Tensor inputX = new Tensor(inputsData, xShape, context,"inputX", NOpenCL.MemoryFlags.ReadWrite, requiresGrad: !false);
+            Tensor target = new Tensor(targetData, targetShape, context,"targetT", NOpenCL.MemoryFlags.ReadWrite, requiresGrad: !false);
 
             // 5. Инициализируем наш высокоуровневый слой LSTM
-            LSTM lstmLayer = new LSTM(computeCtx, clGlob, inFeatures, hiddenSize);
+            LSTM lstmLayer = new LSTM(computeCtx, clGlob, inFeatures, hiddenSize,"lstm");
 
             // Собираем обучаемые параметры для оптимизатора AdamW
             List<Tensor> paramsToOptimize = new List<Tensor>
@@ -214,7 +214,7 @@ namespace cstorchcl.tests
     };
 
             // Создаем оптимизатор с высоким Learning Rate (0.1), чтобы динамика сходимости была видна за 10 эпох
-            Adam optimizer = new Adam(paramsToOptimize, lr: 0.1f, beta1: 0.9f, beta2: 0.999f, epsilon: 1e-8f);
+            Adam optimizer = new Adam(computeCtx,paramsToOptimize, lr: 0.1f, beta1: 0.9f, beta2: 0.999f, epsilon: 1e-8f);
 
             Console.WriteLine("Синтетические датасеты X и Target успешно загружены во VRAM.");
             Console.WriteLine("Запуск оптимизационного цикла (10 эпох)...");
@@ -319,12 +319,12 @@ namespace cstorchcl.tests
                 float[] targetData = new float[] { 0.9f, 0.9f, 0.9f, 0.9f };
 
                 // Аллокация тензоров данных во VRAM
-                Tensor tensorX1 = new Tensor(chunk1Data, xShape, openClContext, MemoryFlags.ReadWrite, requiresGrad: true);
-                Tensor tensorX2 = new Tensor(chunk2Data, xShape, openClContext, MemoryFlags.ReadWrite, requiresGrad: true);
-                Tensor target2 = new Tensor(targetData, xShape, openClContext, MemoryFlags.ReadWrite, requiresGrad: false);
+                Tensor tensorX1 = new Tensor(chunk1Data, xShape, openClContext,"tensorX", MemoryFlags.ReadWrite, requiresGrad: true);
+                Tensor tensorX2 = new Tensor(chunk2Data, xShape, openClContext,"tensorX2", MemoryFlags.ReadWrite, requiresGrad: true);
+                Tensor target2 = new Tensor(targetData, xShape, openClContext,"tensorTarget", MemoryFlags.ReadWrite, requiresGrad: false);
 
                 // 3. Создание слоя LSTMStateful с явной фиксацией batchSize в конструкторе
-                LSTMStateful lstmStateful = new LSTMStateful(computeCtx, clGlob, batchSize, inFeatures, hiddenSize);
+                LSTMStateful lstmStateful = new LSTMStateful(computeCtx, clGlob, batchSize, inFeatures, hiddenSize,"lstmStateful");
 
                 // Гарантируем, что внутренние скрытые состояния сброшены в ноль перед новой сессией
                 lstmStateful.ResetStates();

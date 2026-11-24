@@ -1,7 +1,8 @@
-﻿using System;
-using System.IO;
+﻿using cstorchcl.core;
+using cstorchcl.extensions;
 using NOpenCL;
-using cstorchcl.core;
+using System;
+using System.IO;
 
 namespace cstorchcl.compiler
 {
@@ -81,6 +82,7 @@ namespace cstorchcl.compiler
             _prgRmsNorm = JITProgramCache.GetOrCompile(ctx, dev, rmsnormCode);
             _kernelRmsNormForward = _prgRmsNorm.CreateKernel("rmsnorm_forward");
             _kernelRmsNormBackward = _prgRmsNorm.CreateKernel("rmsnorm_backward");
+            _kernelReduceRowsSum = _prgRmsNorm.CreateKernel("reduce_rows_sum");
             // 3. Загрузка Matmul / BMM
             string matmulCode = File.ReadAllText(Path.Combine(kernelsDir, "matmul.cl"));
             _prgMatMul = JITProgramCache.GetOrCompile(ctx, dev, matmulCode);
@@ -153,9 +155,72 @@ namespace cstorchcl.compiler
             _kernelSparseCeForward = _prgSCrossEntropy.CreateKernel("sparse_cross_entropy_forward");
             _kernelReduceMeanLoss = _prgSCrossEntropy.CreateKernel("reduce_mean_loss");
             _kernelSparseCeBackward = _prgSCrossEntropy.CreateKernel("sparse_cross_entropy_backward");
+            string flashAtt= File.ReadAllText(Path.Combine(kernelsDir, "flash_attention.cl"));
+            _prgFlashAtt = JITProgramCache.GetOrCompile(ctx, dev, flashAtt);
+            _kernelFlashAttnForward = _prgFlashAtt.CreateKernel("flash_attention_forward");
+            //_kernelFlashAttnBackward = _prgFlashAtt.CreateKernel("flash_attention_backward");
+            _kernelFlashAttnBwdDq = _prgFlashAtt.CreateKernel("flash_attention_bwd_dq");
+            _kernelFlashAttnBwdDkv = _prgFlashAtt.CreateKernel("flash_attention_bwd_dkv");
+            //SwiGlu
+            string codeSwGlu= File.ReadAllText(Path.Combine(kernelsDir, "swiglu.cl"));
+            _prgSwGLU= JITProgramCache.GetOrCompile(ctx, dev, codeSwGlu);
+            _kernelSwiGluForward = _prgSwGLU.CreateKernel("swiglu_gate_up_forward");
+            _kernelSwiGluComputeDGateDup = _prgSwGLU.CreateKernel("swiglu_compute_dgate_dup");
+            _kernelSwiGluBwdDx = _prgSwGLU.CreateKernel("swiglu_bwd_dx");
+            _kernelSwiGluBwdDw = _prgSwGLU.CreateKernel("swiglu_bwd_dw");
+            //add
+            _prgAdd = JITProgramCache.GetOrCompile(ctx, dev,File.ReadAllText( Path.Combine(kernelsDir, "add.cl")));
+            _kernelTensorAdd = _prgAdd.CreateKernel("tensor_add_forward");
+          
+        string wkvCode = File.ReadAllText(Path.Combine(kernelsDir, "wkv.cl"));
+        _prgWkv = JITProgramCache.GetOrCompile(ctx, dev, wkvCode);
+_kernelWkvForward = _prgWkv.CreateKernel("wkv_forward");
+_kernelWkvBackward = _prgWkv.CreateKernel("wkv_backward");
+            string rwkvOpsCode = File.ReadAllText(Path.Combine(kernelsDir, "rwkv_ops.cl"));
+            _prgRwkvOps = JITProgramCache.GetOrCompile(ctx, dev, rwkvOpsCode);
+            _kernelTokenShiftFwd = _prgRwkvOps.CreateKernel("token_shift_forward");
+            _kernelTokenShiftBwd = _prgRwkvOps.CreateKernel("token_shift_backward");
+            _kernelRwkvUnaryFwd = _prgRwkvOps.CreateKernel("rwkv_unary_forward");
+            _kernelRwkvUnaryBwd = _prgRwkvOps.CreateKernel("rwkv_unary_backward");
+            _kernelTensorMulFwd = _prgRwkvOps.CreateKernel("tensor_mul_forward");
+            _kernelTensorMulBwd = _prgRwkvOps.CreateKernel("tensor_mul_backward");
+            //droput
+            _prgDropOut = JITProgramCache.GetOrCompile(ctx, dev,File.ReadAllText(Path.Combine(kernelsDir, "dropout.cl")));
+            _kernelDropoutForward = _prgDropOut.CreateKernel("dropout_forward");
+            _kernelDropoutBackward =_prgDropOut.CreateKernel("dropout_backward");
+            //vision
+            _visionPrg = JITProgramCache.GetOrCompile(ctx, dev, File.ReadAllText(Path.Combine(kernelsDir, "vision_ops.cl")));
+            _kernelPatchifyForward = _visionPrg.CreateKernel("patchify_forward");
+            _kernelPatchifyBackward = _visionPrg.CreateKernel("patchify_backward");
+            _kernelAddPosForward = _visionPrg.CreateKernel("add_pos_embed_forward");
+            _kernelAddPosBackwardPos = _visionPrg.CreateKernel("add_pos_embed_backward_pos");
         }
+        //vision ops
+        private Kernel _kernelPatchifyForward, _kernelPatchifyBackward, _kernelAddPosForward, _kernelAddPosBackwardPos;
+        private NOpenCL.Program _visionPrg;
         private NOpenCL.Program _prgShift, _prgCat;
         private Kernel _kernelSparseCeForward, _kernelReduceMeanLoss, _kernelSparseCeBackward;
+        Kernel _kernelReduceRowsSum;
+        Program _prgFlashAtt,_prgSwGLU,_prgAdd;
+        Kernel _kernelFlashAttnForward, _kernelFlashAttnBwdDq, _kernelFlashAttnBwdDkv;
+        Kernel _kernelSwiGluForward, _kernelSwiGluBackwardX, _kernelSwiGluBackwardW, _kernelSwiGluComputeDGateDup, _kernelSwiGluBwdDx, _kernelSwiGluBwdDw;
+        Kernel _kernelTensorAdd;
+        #region MKV
+        // В полях NnClGlob:
+        private Program _prgWkv;
+        private Kernel _kernelWkvForward;
+        private Kernel _kernelWkvBackward;
+        // --- В NnClGlob.cs (поля и LoadKernels) ---
+        private Program _prgRwkvOps;
+        private Kernel _kernelTokenShiftFwd, _kernelTokenShiftBwd;
+        private Kernel _kernelRwkvUnaryFwd, _kernelRwkvUnaryBwd;
+        private Kernel _kernelTensorMulFwd, _kernelTensorMulBwd;
+        //dropuot
+        private Kernel _kernelDropoutForward, _kernelDropoutBackward;
+        NOpenCL.Program _prgDropOut;
+        // В LoadKernels():
+
+        #endregion
         // =========================================================================
         // РЕАЛИЗАЦИЯ ОПЕРАЦИЙ (FORWARD PASS)
         // =========================================================================
@@ -237,7 +302,7 @@ namespace cstorchcl.compiler
 
             // Запуск ядра
             activeQueue.EnqueueNDRangeKernel(_kernelSoftmaxBackward, null, new[] { globalSize }, new[] { localSize });
-            activeQueue.Finish();
+            //activeQueue.Finish();
 
             return gradInput;
         }
@@ -249,31 +314,28 @@ namespace cstorchcl.compiler
         // Добавьте их инициализацию в метод LoadKernels():
         // _kernelRmsNormForward = _prgRmsNorm.CreateKernel("rmsnorm_forward");
         // _kernelRmsNormBackward = _prgRmsNorm.CreateKernel("rmsnorm_backward");
-
+     
         /// <summary>
         /// Глобальная операция RMSNorm (Forward).
         /// Обрабатывает тензор любой формы, выполняя нормализацию по последней оси d_model.
         /// </summary>
-        public Tensor RmsNorm(Tensor x, Tensor gamma)
+        public Tensor RmsNorm(Tensor x, Tensor gamma, string layer_id)
         {
-            int dModel = x.Shape[x.Shape.Length - 1]; // Последняя ось
-            int numRows = x.Size / dModel;            // Количество строк (B * L)
+            int dModel = x.Shape[x.Shape.Length - 1];
+            int numRows = x.Size / dModel;
+            bool reqGrad = x.RequiresGrad || gamma.RequiresGrad;
 
-            // Выходной тензор
-            Tensor y = new Tensor(x.Shape, _computeCtx.Context,"rmsnorm_y", MemoryFlags.ReadWrite, requiresGrad: x.RequiresGrad || gamma.RequiresGrad);
+            Tensor y = new Tensor(x.Shape, _computeCtx.Context, $"{layer_id}.rmsnorm_y", MemoryFlags.ReadWrite, requiresGrad: reqGrad);
 
-            // Буфер для кэша инвертированного RMS (нужен для Backward)
-            // Размер: numRows * sizeof(float)
-            NOpenCL.Buffer invRmsCache = _computeCtx.Context.CreateBuffer(MemoryFlags.ReadWrite, numRows * sizeof(float));
+            // Берем переиспользуемый буфер из менеджера вместо CreateBuffer
+            long cacheBytes = (long)numRows * sizeof(float);
+            NOpenCL.Buffer invRmsCache = OpenCLBufferManager.GetOrCreateBuffer(_computeCtx.Context, $"{layer_id}.inv_rms_cache", cacheBytes);
 
-            // Настройка сетки потоков
             IntPtr localSize = new IntPtr(256);
             IntPtr globalSize = new IntPtr(numRows * 256);
-
             CommandQueue activeQueue = DeviceQueueRegistry.GetCurrent();
+
             int t = 0;
-            // Передаем аргументы ядра:
-            // kernel void rmsnorm_forward(global const float* X, global const float* gamma, global float* Y, global float* inv_rms_cache, const int d_model)
             _kernelRmsNormForward.Arguments[t++].SetValue(x.DataBuffer);
             _kernelRmsNormForward.Arguments[t++].SetValue(gamma.DataBuffer);
             _kernelRmsNormForward.Arguments[t++].SetValue(y.DataBuffer);
@@ -281,22 +343,10 @@ namespace cstorchcl.compiler
             _kernelRmsNormForward.Arguments[t++].SetValue(dModel);
 
             activeQueue.EnqueueNDRangeKernel(_kernelRmsNormForward, null, new[] { globalSize }, new[] { localSize });
-            activeQueue.Finish();
 
-            // Если обучаемся, сохраняем кэш слоя в GradientStorage
-            if (y.RequiresGrad)
+            if (reqGrad)
             {
-                var buffers = new LayerBuffers();
-                buffers.layerBuffers.Add("inv_rms_cache", invRmsCache);
-                GradientStorage.Push(buffers);
-
-                // Привязываем узел операции к графу
-                y.Creator = new RMSNormOp(x, gamma, y, this);
-            }
-            else
-            {
-                // Если обучение не идет, кэш нам больше не нужен, сразу освобождаем VRAM
-                invRmsCache.Dispose();
+                y.Creator = new RMSNormOp(x, gamma, y, invRmsCache, this, layer_id);
             }
 
             return y;
@@ -306,26 +356,23 @@ namespace cstorchcl.compiler
         /// Обратный проход глобальной операции RMSNorm.
         /// Вычисляет градиенты по входу X и по весам Gamma.
         /// </summary>
-        public unsafe (Tensor gradX, Tensor gradGamma) RmsNormBackward(Tensor gradOutput, Tensor x, Tensor gamma, NOpenCL.Buffer invRmsCache)
+        public unsafe (Tensor gradX, Tensor gradGamma) RmsNormBackward(Tensor gradOutput, Tensor x, Tensor gamma, NOpenCL.Buffer invRmsCache,string layerId)
         {
             int dModel = x.Shape[x.Shape.Length - 1];
             int numRows = x.Size / dModel;
 
-            // Выделяем выходные градиенты
-            Tensor gradX = new Tensor(x.Shape, _computeCtx.Context,"rms_norm_backaward_grad_x", MemoryFlags.ReadWrite, requiresGrad: false);
-            Tensor gradGamma = new Tensor(gamma.Shape, _computeCtx.Context, "rms_norm_backaward_grad_gamma", MemoryFlags.ReadWrite, requiresGrad: false);
+            Tensor gradX = new Tensor(x.Shape, _computeCtx.Context, $"{layerId}.rms_norm_backward_grad_x", MemoryFlags.ReadWrite, requiresGrad: false);
+            Tensor gradGamma = new Tensor(gamma.Shape, _computeCtx.Context, $"{layerId}.rms_norm_backward_grad_gamma", MemoryFlags.ReadWrite, requiresGrad: false);
 
-            // Промежуточный буфер градиентов по весам для каждой строки (для последующей редукции)
             long partSizeInBytes = (long)x.Size * sizeof(float);
             using NOpenCL.Buffer gradGammaPart = _computeCtx.Context.CreateBuffer(MemoryFlags.ReadWrite, partSizeInBytes);
 
             IntPtr localSize = new IntPtr(256);
             IntPtr globalSize = new IntPtr(numRows * 256);
-
             CommandQueue activeQueue = DeviceQueueRegistry.GetCurrent();
+
+            // 1. Считаем gradX и частичные gradGammaPart по каждой строке
             int t = 0;
-            // Передаем аргументы ядра:
-            // kernel void rmsnorm_backward(global const float* grad_output, global const float* X, global const float* gamma, global const float* inv_rms_cache, global float* grad_input, global float* grad_gamma_part, const int d_model)
             _kernelRmsNormBackward.Arguments[t++].SetValue(gradOutput.DataBuffer);
             _kernelRmsNormBackward.Arguments[t++].SetValue(x.DataBuffer);
             _kernelRmsNormBackward.Arguments[t++].SetValue(gamma.DataBuffer);
@@ -335,33 +382,18 @@ namespace cstorchcl.compiler
             _kernelRmsNormBackward.Arguments[t++].SetValue(dModel);
 
             activeQueue.EnqueueNDRangeKernel(_kernelRmsNormBackward, null, new[] { globalSize }, new[] { localSize });
-            activeQueue.Finish();
 
-            // --- РЕДУКЦИЯ ГРАДИЕНТОВ ПО ВЕСАМ (Адаптация кода с numpy на C#) ---
-            // Считываем частичные градиенты во временный массив на CPU для суммирования строк
-            float[] hostParts = new float[numRows * dModel];
-            fixed (float* hp = hostParts)
-            {
-                activeQueue.EnqueueReadBuffer(gradGammaPart, true, 0, hostParts.Length * sizeof(float), (IntPtr)hp);
-            }
-            activeQueue.Finish();
+            // 2. Суммируем столбцы gradGammaPart прямо на GPU без пересылки на CPU
+            int redLocal = 64;
+            int redGlobal = ((dModel + redLocal - 1) / redLocal) * redLocal;
 
-            // Суммируем градиенты от всех токенов/строк в единый вектор весов Gamma
-            float[] finalGradGamma = new float[dModel];
-            for (int r = 0; r < numRows; r++)
-            {
-                int rowOffset = r * dModel;
-                for (int c = 0; c < dModel; c++)
-                {
-                    finalGradGamma[c] += hostParts[rowOffset + c];
-                }
-            }
+            int rArg = 0;
+            _kernelReduceRowsSum.Arguments[rArg++].SetValue(gradGammaPart);
+            _kernelReduceRowsSum.Arguments[rArg++].SetValue(gradGamma.DataBuffer);
+            _kernelReduceRowsSum.Arguments[rArg++].SetValue(numRows);
+            _kernelReduceRowsSum.Arguments[rArg++].SetValue(dModel);
 
-            // Загружаем финальный саккумулированный вектор градиента обратно во VRAM буфер gradGamma
-            fixed (float* fgg = finalGradGamma)
-            {
-                activeQueue.EnqueueWriteBuffer(gradGamma.DataBuffer, true, 0, finalGradGamma.Length * sizeof(float), (IntPtr)fgg);
-            }
+            activeQueue.EnqueueNDRangeKernel(_kernelReduceRowsSum,  new[] { new IntPtr(redGlobal) }, new[] { new IntPtr(redLocal) });
             activeQueue.Finish();
 
             return (gradX, gradGamma);
@@ -634,7 +666,7 @@ namespace cstorchcl.compiler
         private Kernel _kernelEmbeddingForward;
         private Kernel _kernelEmbeddingBackward;
 
-        public Tensor Embedding(NOpenCL.Buffer xTokensBuf, Tensor weight, int totalTokens)
+        public Tensor Embedding(NOpenCL.Buffer xTokensBuf, Tensor weight, int totalTokens,string layerId)
         {
             if (weight.Shape.Length != 2)
                 throw new ArgumentException("Матрица весов Embedding должна быть строго 2D тензором [VocabSize, EmbeddingDim].");
@@ -642,7 +674,7 @@ namespace cstorchcl.compiler
             int embeddingDim = weight.Shape[1];
 
             int[] outShape = { totalTokens, embeddingDim };
-            Tensor y = new Tensor(outShape, _computeCtx.Context, "embedding_y",MemoryFlags.ReadWrite, requiresGrad: weight.RequiresGrad);
+            Tensor y = new Tensor(outShape, _computeCtx.Context, $"{layerId}.embedding_y",MemoryFlags.ReadWrite, requiresGrad: weight.RequiresGrad);
 
             // Ось 0 (быстрая) = embeddingDim, Ось 1 = totalTokens
             IntPtr globalSizeX = new IntPtr(embeddingDim);
@@ -668,19 +700,19 @@ namespace cstorchcl.compiler
 
             if (y.RequiresGrad)
             {
-                y.Creator = new EmbeddingOp(xTokensBuf, weight, y, totalTokens, this);
+                y.Creator = new EmbeddingOp(xTokensBuf, weight, y, totalTokens, this,layerId);
             }
             return y;
         }
 
-        public Tensor EmbeddingBackward(Tensor gradOutput, NOpenCL.Buffer xTokensBuf, Tensor weight, int totalTokens)
+        public Tensor EmbeddingBackward(Tensor gradOutput, NOpenCL.Buffer xTokensBuf, Tensor weight, int totalTokens,string lauerId)
         {
             int vocabSize = weight.Shape[0];
             int embeddingDim = weight.Shape[1];
 
             // Больше НЕ нужно создавать float[gradWeight.Size] на CPU и делать EnqueueWriteBuffer!
             // Ядро само перезапишет каждый элемент gradWeight напрямую.
-            Tensor gradWeight = new Tensor(weight.Shape, _computeCtx.Context, "embeddingweights_grad_weight",MemoryFlags.ReadWrite, requiresGrad: false);
+            Tensor gradWeight = new Tensor(weight.Shape, _computeCtx.Context, $"{lauerId}.embeddingweights_grad_weight",MemoryFlags.ReadWrite, requiresGrad: false);
 
             CommandQueue activeQueue = DeviceQueueRegistry.GetCurrent();
 
@@ -1428,6 +1460,7 @@ namespace cstorchcl.compiler
 
         Kernel _kernelCatBackward, _kernelCatForward;
         #endregion
+
         #region CrossEntropy
         /// <summary>
         /// Вычисляет стабильный CrossEntropyLoss напрямую из сырых логитов сети.
@@ -1506,6 +1539,7 @@ namespace cstorchcl.compiler
             return gradInput;
         }
         #endregion
+
         #region Linear
         /// <summary>
         /// Монолитный прямой проход линейного слоя: Y = X * W + Bias
@@ -1513,7 +1547,7 @@ namespace cstorchcl.compiler
         /// <summary>
         /// Монолитный прямой проход линейного слоя с 4x4 регистровым тайлингом: Y = X * W + Bias
         /// </summary>
-        public Tensor LinearForward(Tensor x, Tensor w, Tensor bias)
+        public Tensor LinearForward(Tensor x, Tensor w, Tensor bias,string layerId)
         {
             int batch = x.Shape[0];
             int m = x.Shape[1];
@@ -1522,7 +1556,7 @@ namespace cstorchcl.compiler
 
             int[] outShape = { batch, m, n };
             bool reqGrad = x.RequiresGrad || w.RequiresGrad || bias.RequiresGrad;
-            Tensor y = new Tensor(outShape, _computeCtx.Context, "LinearForward_y", MemoryFlags.ReadWrite, requiresGrad: reqGrad);
+            Tensor y = new Tensor(outShape, _computeCtx.Context, $"{layerId}.LinearForward_y", MemoryFlags.ReadWrite, requiresGrad: reqGrad);
 
             int batchStrideX = m * k;
             int batchStrideY = m * n;
@@ -1567,7 +1601,7 @@ _kernelLinearForwardTiled.Arguments[3].SetValue(y.DataBuffer);
 
             if (y.RequiresGrad)
             {
-                y.Creator = new LinearOp(x, w, bias, y, this);
+                y.Creator = new LinearOp(x, w, bias, y, this,layerId);
             }
 
             return y;
@@ -1577,20 +1611,22 @@ _kernelLinearForwardTiled.Arguments[3].SetValue(y.DataBuffer);
         /// <summary>
         /// Вычисляет градиент по вектору смещения Bias: сумма gradOutput по осям Batch и M.
         /// </summary>
-        public Tensor LinearBiasBackward(Tensor gradOutput, int[] biasShape)
+        public Tensor LinearBiasBackward(Tensor gradOutput, int[] biasShape, string layerId)
         {
             int batch = gradOutput.Shape[0];
             int m = gradOutput.Shape[1];
             int n = gradOutput.Shape[2];
             int totalRows = batch * m;
 
-            Tensor gradBias = new Tensor(biasShape, _computeCtx.Context, "LinearBiasBackward_gradbias", MemoryFlags.ReadWrite, requiresGrad: false);
-
-            // Запускаем по 1 потоку на каждый выходной признак N с группой 256
-            const int localX = 256;
-            int globalX = ((n + localX - 1) / localX) * localX;
-
+            Tensor gradBias = new Tensor(biasShape, _computeCtx.Context, $"{layerId}.LinearBiasBackward_gradbias", MemoryFlags.ReadWrite, requiresGrad: false);
             CommandQueue activeQueue = DeviceQueueRegistry.GetCurrent();
+            // Запускаем по 1 потоку на каждый выходной признак N с группой 256
+            int localX = (int)256;
+            while (n % localX > 0)
+                localX /= 2;
+            //int globalX = n;
+
+
             int t = 0;
             _kernelLinearBiasBackward.Arguments[t++].SetValue(gradOutput.DataBuffer);
             _kernelLinearBiasBackward.Arguments[t++].SetValue(gradBias.DataBuffer);
@@ -1599,15 +1635,18 @@ _kernelLinearForwardTiled.Arguments[3].SetValue(y.DataBuffer);
 
             activeQueue.EnqueueNDRangeKernel(
                 _kernelLinearBiasBackward,
-                new[] { (IntPtr)globalX },
+                new[] { (IntPtr)n },
+               // null
                 new[] { (IntPtr)localX }
             );
 
             return gradBias;
         }
 
+
         private Kernel _kernelLinearBiasBackward, _kernelLinearForwardTiled;
         #endregion
+
         #region Sum
         /// <summary>
         /// Суммирует элементы тензора вдоль заданной оси.
@@ -1615,7 +1654,7 @@ _kernelLinearForwardTiled.Arguments[3].SetValue(y.DataBuffer);
         /// <param name="x">Входной тензор.</param>
         /// <param name="axis">Индекс оси для редукции (поддерживает отрицательные значения, например -1).</param>
         /// <param name="keepDims">Если true, сохраняет редуцированную ось с размером 1.</param>
-        public Tensor Sum(Tensor x, int axis, bool keepDims = false)
+        public Tensor Sum(Tensor x, int axis, string layerId,bool keepDims = false)
         {
             int targetAxis = axis < 0 ? x.Shape.Length + axis : axis;
             if (targetAxis < 0 || targetAxis >= x.Shape.Length)
@@ -1656,17 +1695,12 @@ _kernelLinearForwardTiled.Arguments[3].SetValue(y.DataBuffer);
                 }
             }
 
-            Tensor y = new Tensor(outShape, _computeCtx.Context, "sum_y",MemoryFlags.ReadWrite, requiresGrad: x.RequiresGrad);
+            Tensor y = new Tensor(outShape, _computeCtx.Context,layerId+"."+ "sum_y",MemoryFlags.ReadWrite, requiresGrad: x.RequiresGrad);
 
             // 3. Настраиваем 2D-сетку потоков [outerSize, innerSize]
-            IntPtr[] globalSize = { (IntPtr)outerSize, (IntPtr)innerSize };
+            //IntPtr[] globalSize = { (IntPtr)outerSize, (IntPtr)innerSize };
             CommandQueue activeQueue = DeviceQueueRegistry.GetCurrent();
-            int lX = 16, lY = 16;
-            while (outerSize % lX > 0)
-                lX--;
-            while (innerSize % lY > 0)
-                lY--;
-            IntPtr[] loc = { (IntPtr)lX, (IntPtr)lY };
+           
             int t = 0;
             _kernelReduceSumAxis.Arguments[t++].SetValue(x.DataBuffer);
             _kernelReduceSumAxis.Arguments[t++].SetValue(y.DataBuffer);
@@ -1675,9 +1709,19 @@ _kernelLinearForwardTiled.Arguments[3].SetValue(y.DataBuffer);
             _kernelReduceSumAxis.Arguments[t++].SetValue(innerSize);
 
             // Передаем null в качестве localWorkSize, чтобы драйвер OpenCL сам оптимально разбил сетку
-            activeQueue.EnqueueNDRangeKernel(_kernelReduceSumAxis, globalSize,loc );
+            //activeQueue.EnqueueNDRangeKernel(_kernelReduceSumAxis, globalSize,loc );
             //activeQueue.Finish();
+            int localX = (innerSize >= 32) ? 32 : 1;
+            int localY = 256 / localX; // 8 или 256 (всегда 256 потоков в группе!)
 
+            int globalX = ((innerSize + localX - 1) / localX) * localX;
+            int globalY = outerSize * localY;
+
+            activeQueue.EnqueueNDRangeKernel(
+                _kernelReduceSumAxis,
+                new[] { (IntPtr)globalX, (IntPtr)globalY },
+                new[] { (IntPtr)localX, (IntPtr)localY }
+            );
             if (y.RequiresGrad)
             {
                 y.Creator = new SumOp(x, y, targetAxis, this);
@@ -1701,17 +1745,28 @@ _kernelLinearForwardTiled.Arguments[3].SetValue(y.DataBuffer);
 
             Tensor gradInput = new Tensor(inputShape, _computeCtx.Context,"sumbackward_gradInput", MemoryFlags.ReadWrite, requiresGrad: false);
 
-            IntPtr[] globalSize = { (IntPtr)outerSize, (IntPtr)innerSize };
+           // IntPtr[] globalSize = { (IntPtr)outerSize, (IntPtr)innerSize };
             CommandQueue activeQueue = DeviceQueueRegistry.GetCurrent();
 
             int t = 0;
+            int totalElements = outerSize * axisSize * innerSize;
+            const int bwdLocal = 256;
+            int bwdGlobal = ((totalElements + bwdLocal - 1) / bwdLocal) * bwdLocal;
+
+            t = 0;
             _kernelReduceSumAxisBackward.Arguments[t++].SetValue(gradOutput.DataBuffer);
             _kernelReduceSumAxisBackward.Arguments[t++].SetValue(gradInput.DataBuffer);
-            _kernelReduceSumAxisBackward.Arguments[t++].SetValue(outerSize);
+            _kernelReduceSumAxisBackward.Arguments[t++].SetValue(totalElements);
             _kernelReduceSumAxisBackward.Arguments[t++].SetValue(axisSize);
             _kernelReduceSumAxisBackward.Arguments[t++].SetValue(innerSize);
 
-            activeQueue.EnqueueNDRangeKernel(_kernelReduceSumAxisBackward, globalSize, null);
+            activeQueue.EnqueueNDRangeKernel(
+                _kernelReduceSumAxisBackward,
+                new[] { (IntPtr)bwdGlobal },
+                new[] { (IntPtr)bwdLocal }
+            );
+
+            //activeQueue.EnqueueNDRangeKernel(_kernelReduceSumAxisBackward, globalSize, null);
             //activeQueue.Finish();
 
             return gradInput;
@@ -1722,7 +1777,7 @@ _kernelLinearForwardTiled.Arguments[3].SetValue(y.DataBuffer);
         /// <summary>
         /// Пакетное матричное умножение с возможностью транспонирования матриц на лету (без аллокации Permute).
         /// </summary>
-        public Tensor BmmPermute(Tensor a, Tensor b, bool transA = false, bool transB = false)
+        public Tensor BmmPermute(Tensor a, Tensor b,string layerId, bool transA = false, bool transB = false)
         {
             if (a.Shape.Length != 3 || b.Shape.Length != 3)
                 throw new ArgumentException("BmmPermute ожидает 3D-тензоры.");
@@ -1737,7 +1792,7 @@ _kernelLinearForwardTiled.Arguments[3].SetValue(y.DataBuffer);
                 throw new ArgumentException($"Несовпадение внутренних осей: {kA} != {kB}.");
 
             int[] outShape = { batch, m, n };
-            Tensor c = new Tensor(outShape, _computeCtx.Context, "bmm_permute_c",MemoryFlags.ReadWrite, requiresGrad: false);
+            Tensor c = new Tensor(outShape, _computeCtx.Context, $"{layerId}.bmm_permute_c",MemoryFlags.ReadWrite, requiresGrad: false);
 
             int batchStrideA = (a.Shape[0] == 1) ? 0 : (a.Shape[1] * a.Shape[2]);
             int batchStrideB = (b.Shape[0] == 1) ? 0 : (b.Shape[1] * b.Shape[2]);
@@ -1857,6 +1912,744 @@ _kernelLinearForwardTiled.Arguments[3].SetValue(y.DataBuffer);
         }
 
         #endregion
+        #region FlashAttenction
+        /// <summary>
+        /// Fused FlashAttention (Backward).
+        /// </summary>
+        public Tensor FlashAttention(Tensor q, Tensor k, Tensor v, int numHeads, bool isCausal = true, string layerId = "flash_attn")
+        {
+            int batchSize = q.Shape[0];
+            int seqLen = q.Shape[1];
+            int totalDim = q.Shape[2];
+            int headDim = totalDim / numHeads;
+
+            if (headDim > 128)
+                throw new ArgumentException($"HeadDim ({headDim}) превышает MAX_HEAD_DIM (128).");
+
+            const int TILE_SIZE = 16;
+            float scale = 1.0f / (float)Math.Sqrt(headDim);
+            bool reqGrad = q.RequiresGrad || k.RequiresGrad || v.RequiresGrad;
+
+            Tensor output = new Tensor(q.Shape, _computeCtx.Context, $"{layerId}_out", MemoryFlags.ReadWrite, requiresGrad: reqGrad);
+
+            int numQTiles = (seqLen + TILE_SIZE - 1) / TILE_SIZE;
+            IntPtr[] localSize = new[] { new IntPtr(TILE_SIZE), new IntPtr(1) };
+            IntPtr[] globalSize = new[] { new IntPtr(numQTiles * TILE_SIZE), new IntPtr(batchSize * numHeads) };
+
+            CommandQueue activeQueue = DeviceQueueRegistry.GetCurrent();
+            int arg = 0;
+            _kernelFlashAttnForward.Arguments[arg++].SetValue(q.DataBuffer);
+            _kernelFlashAttnForward.Arguments[arg++].SetValue(k.DataBuffer);
+            _kernelFlashAttnForward.Arguments[arg++].SetValue(v.DataBuffer);
+            _kernelFlashAttnForward.Arguments[arg++].SetValue(output.DataBuffer);
+            _kernelFlashAttnForward.Arguments[arg++].SetValue(seqLen);
+            _kernelFlashAttnForward.Arguments[arg++].SetValue(numHeads);
+            _kernelFlashAttnForward.Arguments[arg++].SetValue(headDim);
+            _kernelFlashAttnForward.Arguments[arg++].SetValue(scale);
+            _kernelFlashAttnForward.Arguments[arg++].SetValue(isCausal ? 1 : 0);
+
+            activeQueue.EnqueueNDRangeKernel(_kernelFlashAttnForward, null, globalSize, localSize);
+            //activeQueue.Finish();
+
+            if (output.RequiresGrad)
+            {
+                output.Creator = new FlashAttentionOp(q, k, v, output, numHeads, isCausal, this, layerId);
+            }
+
+            return output;
+        }
+
+        /// <summary>
+        /// Ускоренный обратный проход FlashAttention на двух тайловых ядрах (без lCache).
+        /// </summary>
+        public (Tensor gradQ, Tensor gradK, Tensor gradV) FlashAttentionBackward(
+            Tensor gradOutput, Tensor q, Tensor k, Tensor v, Tensor output,
+            int numHeads, bool isCausal, string layerId)
+        {
+            int batchSize = q.Shape[0];
+            int seqLen = q.Shape[1];
+            int headDim = q.Shape[2] / numHeads;
+            float scale = 1.0f / (float)Math.Sqrt(headDim);
+
+            Tensor gradQ = new Tensor(q.Shape, _computeCtx.Context, $"{layerId}_grad_q", MemoryFlags.ReadWrite, requiresGrad: false);
+            Tensor gradK = new Tensor(k.Shape, _computeCtx.Context, $"{layerId}_grad_k", MemoryFlags.ReadWrite, requiresGrad: false);
+            Tensor gradV = new Tensor(v.Shape, _computeCtx.Context, $"{layerId}_grad_v", MemoryFlags.ReadWrite, requiresGrad: false);
+            OpenCLBufferFiller.FillZero(gradQ.DataBuffer, gradQ.Size * sizeof(float));
+            OpenCLBufferFiller.FillZero(gradK.DataBuffer, gradK.Size * sizeof(float));
+            OpenCLBufferFiller.FillZero(gradV.DataBuffer, gradV.Size * sizeof(float));
+            
+            // Обязательная сетка под статический тайл TILE_SIZE = 16
+            const int TILE_SIZE = 16;
+            int numTiles = (seqLen + TILE_SIZE - 1) / TILE_SIZE;
+            IntPtr[] localSize = new[] { new IntPtr(TILE_SIZE), new IntPtr(1) };
+            IntPtr[] globalSize = new[] { new IntPtr(numTiles * TILE_SIZE), new IntPtr(batchSize * numHeads) };
+
+            CommandQueue activeQueue = DeviceQueueRegistry.GetCurrent();
+            //activeQueue.Finish();
+            // -----------------------------------------------------------------
+            // ЯДРО 1: Вычисляем gradQ (тайлинг K и V в __local памяти)
+            // -----------------------------------------------------------------
+            int arg1 = 0;
+            _kernelFlashAttnBwdDq.Arguments[arg1++].SetValue(q.DataBuffer);
+            _kernelFlashAttnBwdDq.Arguments[arg1++].SetValue(k.DataBuffer);
+            _kernelFlashAttnBwdDq.Arguments[arg1++].SetValue(v.DataBuffer);
+            _kernelFlashAttnBwdDq.Arguments[arg1++].SetValue(output.DataBuffer);
+            _kernelFlashAttnBwdDq.Arguments[arg1++].SetValue(gradOutput.DataBuffer);
+            _kernelFlashAttnBwdDq.Arguments[arg1++].SetValue(gradQ.DataBuffer);
+            _kernelFlashAttnBwdDq.Arguments[arg1++].SetValue(seqLen);
+            _kernelFlashAttnBwdDq.Arguments[arg1++].SetValue(numHeads);
+            _kernelFlashAttnBwdDq.Arguments[arg1++].SetValue(headDim);
+            _kernelFlashAttnBwdDq.Arguments[arg1++].SetValue(scale);
+            _kernelFlashAttnBwdDq.Arguments[arg1++].SetValue(isCausal ? 1 : 0);
+
+            activeQueue.EnqueueNDRangeKernel(_kernelFlashAttnBwdDq, globalSize, localSize);
+
+            // -----------------------------------------------------------------
+            // ЯДРО 2: Вычисляем gradK и gradV (тайлинг Q и dO в __local памяти)
+            // -----------------------------------------------------------------
+            int arg2 = 0;
+            _kernelFlashAttnBwdDkv.Arguments[arg2++].SetValue(q.DataBuffer);
+            _kernelFlashAttnBwdDkv.Arguments[arg2++].SetValue(k.DataBuffer);
+            _kernelFlashAttnBwdDkv.Arguments[arg2++].SetValue(v.DataBuffer);
+            _kernelFlashAttnBwdDkv.Arguments[arg2++].SetValue(output.DataBuffer);
+            _kernelFlashAttnBwdDkv.Arguments[arg2++].SetValue(gradOutput.DataBuffer);
+            _kernelFlashAttnBwdDkv.Arguments[arg2++].SetValue(gradK.DataBuffer);
+            _kernelFlashAttnBwdDkv.Arguments[arg2++].SetValue(gradV.DataBuffer);
+            _kernelFlashAttnBwdDkv.Arguments[arg2++].SetValue(seqLen);
+            _kernelFlashAttnBwdDkv.Arguments[arg2++].SetValue(numHeads);
+            _kernelFlashAttnBwdDkv.Arguments[arg2++].SetValue(headDim);
+            _kernelFlashAttnBwdDkv.Arguments[arg2++].SetValue(scale);
+            _kernelFlashAttnBwdDkv.Arguments[arg2++].SetValue(isCausal ? 1 : 0);
+
+            activeQueue.EnqueueNDRangeKernel(_kernelFlashAttnBwdDkv, globalSize, localSize);
+            //activeQueue.Finish();
+
+            return (gradQ, gradK, gradV);
+        }
+
+        #endregion
+        #region SwiGLU
+        public Tensor SwiGLUGateUp(Tensor x, Tensor weightGateUp, int intermediateDim, string layerId = "swiglu")
+        {
+            int dModel = x.Shape[x.Shape.Length - 1];
+            int totalRows = x.Size / dModel;
+
+            int[] outShape = (int[])x.Shape.Clone();
+            outShape[outShape.Length - 1] = intermediateDim;
+
+            bool reqGrad = x.RequiresGrad || weightGateUp.RequiresGrad;
+            Tensor output = new Tensor(outShape, _computeCtx.Context, $"{layerId}_out", MemoryFlags.ReadWrite, requiresGrad: reqGrad);
+
+            const int TILE = 16;
+            IntPtr[] localSize = new[] { new IntPtr(TILE), new IntPtr(TILE) };
+            IntPtr[] globalSize = new[]
+            {
+        new IntPtr(((intermediateDim + TILE - 1) / TILE) * TILE),
+        new IntPtr(((totalRows + TILE - 1) / TILE) * TILE)
+    };
+
+            CommandQueue activeQueue = DeviceQueueRegistry.GetCurrent();
+            int arg = 0;
+            _kernelSwiGluForward.Arguments[arg++].SetValue(x.DataBuffer);
+            _kernelSwiGluForward.Arguments[arg++].SetValue(weightGateUp.DataBuffer);
+            _kernelSwiGluForward.Arguments[arg++].SetValue(output.DataBuffer);
+            _kernelSwiGluForward.Arguments[arg++].SetValue(totalRows);
+            _kernelSwiGluForward.Arguments[arg++].SetValue(dModel);
+            _kernelSwiGluForward.Arguments[arg++].SetValue(intermediateDim);
+
+            activeQueue.EnqueueNDRangeKernel(_kernelSwiGluForward,  globalSize, localSize);
+            activeQueue.Finish();
+
+            if (output.RequiresGrad)
+            {
+                output.Creator = new SwiGLUOp(x, weightGateUp, output, intermediateDim, this, layerId);
+            }
+
+            return output;
+        }
+
+        public (Tensor gradX, Tensor gradW) SwiGLUGateUpBackward(
+            Tensor gradOutput, Tensor x, Tensor weightGateUp, int intermediateDim, string layerId)
+        {
+            int dModel = x.Shape[x.Shape.Length - 1];
+            int totalRows = x.Size / dModel;
+            int twoN = 2 * intermediateDim;
+
+            Tensor gradX = new Tensor(x.Shape, _computeCtx.Context, $"{layerId}_grad_x", MemoryFlags.ReadWrite, requiresGrad: false);
+            Tensor gradW = new Tensor(weightGateUp.Shape, _computeCtx.Context, $"{layerId}_grad_w", MemoryFlags.ReadWrite, requiresGrad: false);
+            OpenCLBufferFiller.FillZero(gradX.DataBuffer, gradX.Size * sizeof(float));
+            OpenCLBufferFiller.FillZero(gradW.DataBuffer, gradW.Size * sizeof(float));
+            // Временный GPU-буфер под [d_gate | d_up] формы [totalRows, 2 * intermediateDim]
+            long dGateUpBytes = (long)totalRows * twoN * sizeof(float);
+            using NOpenCL.Buffer dGateUpBuf = _computeCtx.Context.CreateBuffer(MemoryFlags.ReadWrite, dGateUpBytes);
+
+            const int TILE = 16;
+            IntPtr[] localSize = new[] { new IntPtr(TILE), new IntPtr(TILE) };
+            CommandQueue activeQueue = DeviceQueueRegistry.GetCurrent();
+            activeQueue.Finish();
+            // Шаг 1: Вычисляем dGateUp [M, 2*N]
+            IntPtr[] global1 = new[]
+            {
+        new IntPtr(((intermediateDim + TILE - 1) / TILE) * TILE),
+        new IntPtr(((totalRows + TILE - 1) / TILE) * TILE)
+    };
+            int a1 = 0;
+            _kernelSwiGluComputeDGateDup.Arguments[a1++].SetValue(gradOutput.DataBuffer);
+            _kernelSwiGluComputeDGateDup.Arguments[a1++].SetValue(x.DataBuffer);
+            _kernelSwiGluComputeDGateDup.Arguments[a1++].SetValue(weightGateUp.DataBuffer);
+            _kernelSwiGluComputeDGateDup.Arguments[a1++].SetValue(dGateUpBuf);
+            _kernelSwiGluComputeDGateDup.Arguments[a1++].SetValue(totalRows);
+            _kernelSwiGluComputeDGateDup.Arguments[a1++].SetValue(dModel);
+            _kernelSwiGluComputeDGateDup.Arguments[a1++].SetValue(intermediateDim);
+            activeQueue.EnqueueNDRangeKernel(_kernelSwiGluComputeDGateDup, null, global1, localSize);
+
+            // Шаг 2A: Вычисляем gradX [M, K]
+            IntPtr[] global2a = new[]
+            {
+        new IntPtr(((dModel + TILE - 1) / TILE) * TILE),
+        new IntPtr(((totalRows + TILE - 1) / TILE) * TILE)
+    };
+            int a2 = 0;
+            _kernelSwiGluBwdDx.Arguments[a2++].SetValue(dGateUpBuf);
+            _kernelSwiGluBwdDx.Arguments[a2++].SetValue(weightGateUp.DataBuffer);
+            _kernelSwiGluBwdDx.Arguments[a2++].SetValue(gradX.DataBuffer);
+            _kernelSwiGluBwdDx.Arguments[a2++].SetValue(totalRows);
+            _kernelSwiGluBwdDx.Arguments[a2++].SetValue(dModel);
+            _kernelSwiGluBwdDx.Arguments[a2++].SetValue(twoN);
+            activeQueue.EnqueueNDRangeKernel(_kernelSwiGluBwdDx, global2a, localSize);
+
+            // Шаг 2B: Вычисляем gradW [K, 2*N]
+            IntPtr[] global2b = new[]
+            {
+        new IntPtr(((twoN + TILE - 1) / TILE) * TILE),
+        new IntPtr(((dModel + TILE - 1) / TILE) * TILE)
+    };
+            int a3 = 0;
+            _kernelSwiGluBwdDw.Arguments[a3++].SetValue(x.DataBuffer);
+            _kernelSwiGluBwdDw.Arguments[a3++].SetValue(dGateUpBuf);
+            _kernelSwiGluBwdDw.Arguments[a3++].SetValue(gradW.DataBuffer);
+            _kernelSwiGluBwdDw.Arguments[a3++].SetValue(totalRows);
+            _kernelSwiGluBwdDw.Arguments[a3++].SetValue(dModel);
+            _kernelSwiGluBwdDw.Arguments[a3++].SetValue(twoN);
+            activeQueue.EnqueueNDRangeKernel(_kernelSwiGluBwdDw, global2b, localSize);
+
+            activeQueue.Finish();
+
+            return (gradX, gradW);
+        }
+
+        #endregion
+        public Tensor Add(Tensor a, Tensor b, string opId = "add")
+        {
+            if (a.Size != b.Size)
+                throw new ArgumentException($"Размеры тензоров не совпадают: {a.Size} != {b.Size}");
+
+            bool reqGrad = a.RequiresGrad || b.RequiresGrad;
+            Tensor output = new Tensor(a.Shape, _computeCtx.Context, $"{opId}_out", MemoryFlags.ReadWrite, requiresGrad: reqGrad);
+
+            int localSize = 256;
+            int globalSize = ((a.Size + localSize - 1) / localSize) * localSize;
+
+            CommandQueue queue = DeviceQueueRegistry.GetCurrent();
+            int arg = 0;
+            _kernelTensorAdd.Arguments[arg++].SetValue(a.DataBuffer);
+            _kernelTensorAdd.Arguments[arg++].SetValue(b.DataBuffer);
+            _kernelTensorAdd.Arguments[arg++].SetValue(output.DataBuffer);
+            _kernelTensorAdd.Arguments[arg++].SetValue(a.Size);
+
+            queue.EnqueueNDRangeKernel(_kernelTensorAdd, new[] { new IntPtr(globalSize) }, new[] { new IntPtr(localSize) });
+            queue.Finish();
+
+            if (output.RequiresGrad)
+            {
+                output.Creator = new AddOp(a, b, output,this,opId);
+            }
+
+            return output;
+        }
+        public Tensor CloneTensor(Tensor src, string newTensorId)
+        {
+            Tensor dst = new Tensor(src.Shape, _computeCtx.Context, newTensorId, MemoryFlags.ReadWrite, requiresGrad: false);
+            CommandQueue queue = DeviceQueueRegistry.GetCurrent();
+            queue.EnqueueCopyBuffer(src.DataBuffer, dst.DataBuffer, 0, 0, (long)src.Size * sizeof(float));
+            queue.Finish();
+            return dst;
+        }
+        #region MKV
+        // Forward: w [C], u [C], k [B, T, C], v [B, T, C] -> y [B, T, C]
+        // В NnClGlob.cs:
+        public Tensor Wkv(Tensor w, Tensor u, Tensor k, Tensor v, string layerId)
+        {
+            int B = k.Shape[0];
+            int T = k.Shape[1];
+            int C = k.Shape[2];
+
+            bool reqGrad = w.RequiresGrad || u.RequiresGrad || k.RequiresGrad || v.RequiresGrad;
+            Tensor y = new Tensor(k.Shape, _computeCtx.Context, $"{layerId}.wkv_y", MemoryFlags.ReadWrite, requiresGrad: reqGrad);
+
+            long stateBytes = (long)B * T * C * sizeof(float);
+            NOpenCL.Buffer stateAa = OpenCLBufferManager.GetOrCreateBuffer(_computeCtx.Context, $"wkv_state_aa_{layerId}", stateBytes);
+            NOpenCL.Buffer stateBb = OpenCLBufferManager.GetOrCreateBuffer(_computeCtx.Context, $"wkv_state_bb_{layerId}", stateBytes);
+            NOpenCL.Buffer statePp = OpenCLBufferManager.GetOrCreateBuffer(_computeCtx.Context, $"wkv_state_pp_{layerId}", stateBytes);
+
+            int totalThreads = B * C;
+            int localSize = 64;
+            int globalSize = ((totalThreads + localSize - 1) / localSize) * localSize;
+
+            CommandQueue queue = DeviceQueueRegistry.GetCurrent();
+            int arg = 0;
+            _kernelWkvForward.Arguments[arg++].SetValue(w.DataBuffer);
+            _kernelWkvForward.Arguments[arg++].SetValue(u.DataBuffer);
+            _kernelWkvForward.Arguments[arg++].SetValue(k.DataBuffer);
+            _kernelWkvForward.Arguments[arg++].SetValue(v.DataBuffer);
+            _kernelWkvForward.Arguments[arg++].SetValue(y.DataBuffer);
+            _kernelWkvForward.Arguments[arg++].SetValue(stateAa);
+            _kernelWkvForward.Arguments[arg++].SetValue(stateBb);
+            _kernelWkvForward.Arguments[arg++].SetValue(statePp);
+            _kernelWkvForward.Arguments[arg++].SetValue(B);
+            _kernelWkvForward.Arguments[arg++].SetValue(T);
+            _kernelWkvForward.Arguments[arg++].SetValue(C);
+
+            queue.EnqueueNDRangeKernel(_kernelWkvForward, null, new[] { new IntPtr(globalSize) }, new[] { new IntPtr(localSize) });
+
+            if (reqGrad)
+            {
+                y.Creator = new WkvOp(w, u, k, v, y, stateAa, stateBb, statePp, this, layerId);
+            }
+
+            return y;
+        }
+
+        // Backward
+        public (Tensor gw, Tensor gu, Tensor gk, Tensor gv) WkvBackward(
+            Tensor w, Tensor u, Tensor k, Tensor v, Tensor y, Tensor gradOutput,
+            NOpenCL.Buffer stateAa, NOpenCL.Buffer stateBb, NOpenCL.Buffer statePp, string layerId)
+        {
+            int B = k.Shape[0];
+            int T = k.Shape[1];
+            int C = k.Shape[2];
+
+            Tensor gw = new Tensor(w.Shape, _computeCtx.Context, $"{layerId}.gw", MemoryFlags.ReadWrite, false);
+            Tensor gu = new Tensor(u.Shape, _computeCtx.Context, $"{layerId}.gu", MemoryFlags.ReadWrite, false);
+            Tensor gk = new Tensor(k.Shape, _computeCtx.Context, $"{layerId}.gk", MemoryFlags.ReadWrite, false);
+            Tensor gv = new Tensor(v.Shape, _computeCtx.Context, $"{layerId}.gv", MemoryFlags.ReadWrite, false);
+
+            long partBytes = (long)B * C * sizeof(float);
+            using NOpenCL.Buffer gwPart = _computeCtx.Context.CreateBuffer(MemoryFlags.ReadWrite, partBytes);
+            using NOpenCL.Buffer guPart = _computeCtx.Context.CreateBuffer(MemoryFlags.ReadWrite, partBytes);
+
+            int totalThreads = B * C;
+            int localSize = 64;
+            int globalSize = ((totalThreads + localSize - 1) / localSize) * localSize;
+
+            CommandQueue queue = DeviceQueueRegistry.GetCurrent();
+            int arg = 0;
+            _kernelWkvBackward.Arguments[arg++].SetValue(w.DataBuffer);
+            _kernelWkvBackward.Arguments[arg++].SetValue(u.DataBuffer);
+            _kernelWkvBackward.Arguments[arg++].SetValue(k.DataBuffer);
+            _kernelWkvBackward.Arguments[arg++].SetValue(v.DataBuffer);
+            _kernelWkvBackward.Arguments[arg++].SetValue(y.DataBuffer);
+            _kernelWkvBackward.Arguments[arg++].SetValue(gradOutput.DataBuffer);
+            _kernelWkvBackward.Arguments[arg++].SetValue(stateAa);
+            _kernelWkvBackward.Arguments[arg++].SetValue(stateBb);
+            _kernelWkvBackward.Arguments[arg++].SetValue(statePp);
+            _kernelWkvBackward.Arguments[arg++].SetValue(gwPart);
+            _kernelWkvBackward.Arguments[arg++].SetValue(guPart);
+            _kernelWkvBackward.Arguments[arg++].SetValue(gk.DataBuffer);
+            _kernelWkvBackward.Arguments[arg++].SetValue(gv.DataBuffer);
+            _kernelWkvBackward.Arguments[arg++].SetValue(B);
+            _kernelWkvBackward.Arguments[arg++].SetValue(T);
+            _kernelWkvBackward.Arguments[arg++].SetValue(C);
+
+            queue.EnqueueNDRangeKernel(_kernelWkvBackward, null, new[] { new IntPtr(globalSize) }, new[] { new IntPtr(localSize) });
+
+            // Редукция по батчу B с помощью вашего готового ядра _kernelReduceRowsSum
+            int redLocal = 64;
+            int redGlobal = ((C + redLocal - 1) / redLocal) * redLocal;
+
+            // Суммируем gwPart [B, C] -> gw [C]
+            _kernelReduceRowsSum.Arguments[0].SetValue(gwPart);
+            _kernelReduceRowsSum.Arguments[1].SetValue(gw.DataBuffer);
+            _kernelReduceRowsSum.Arguments[2].SetValue(B);
+            _kernelReduceRowsSum.Arguments[3].SetValue(C);
+            queue.EnqueueNDRangeKernel(_kernelReduceRowsSum, null, new[] { new IntPtr(redGlobal) }, new[] { new IntPtr(redLocal) });
+
+            // Суммируем guPart [B, C] -> gu [C]
+            _kernelReduceRowsSum.Arguments[0].SetValue(guPart);
+            _kernelReduceRowsSum.Arguments[1].SetValue(gu.DataBuffer);
+            _kernelReduceRowsSum.Arguments[2].SetValue(B);
+            _kernelReduceRowsSum.Arguments[3].SetValue(C);
+            queue.EnqueueNDRangeKernel(_kernelReduceRowsSum, null, new[] { new IntPtr(redGlobal) }, new[] { new IntPtr(redLocal) });
+
+            return (gw, gu, gk, gv);
+        }
+        public Tensor TokenShift(Tensor x, Tensor mu, string layerId)
+        {
+            int B = x.Shape[0], T = x.Shape[1], C = x.Shape[2];
+            bool reqGrad = x.RequiresGrad || mu.RequiresGrad;
+            Tensor outT = new Tensor(x.Shape, _computeCtx.Context, $"{layerId}.tshift", MemoryFlags.ReadWrite, reqGrad);
+
+            int total = B * T * C;
+            int local = 256;
+            int global = ((total + local - 1) / local) * local;
+
+            var q = DeviceQueueRegistry.GetCurrent();
+            _kernelTokenShiftFwd.Arguments[0].SetValue(x.DataBuffer);
+            _kernelTokenShiftFwd.Arguments[1].SetValue(mu.DataBuffer);
+            _kernelTokenShiftFwd.Arguments[2].SetValue(outT.DataBuffer);
+            _kernelTokenShiftFwd.Arguments[3].SetValue(B);
+            _kernelTokenShiftFwd.Arguments[4].SetValue(T);
+            _kernelTokenShiftFwd.Arguments[5].SetValue(C);
+            q.EnqueueNDRangeKernel(_kernelTokenShiftFwd, null, new[] { (IntPtr)global }, new[] { (IntPtr)local });
+
+            if (reqGrad)
+                outT.Creator = new TokenShiftOp(x, mu, outT, this, layerId);
+
+            return outT;
+        }
+
+        public (Tensor gradX, Tensor gradMu) TokenShiftBackward(Tensor gradOut, Tensor x, Tensor mu, string layerId)
+        {
+            int B = x.Shape[0], T = x.Shape[1], C = x.Shape[2];
+            Tensor gradX = new Tensor(x.Shape, _computeCtx.Context, $"{layerId}.tshift_gx", MemoryFlags.ReadWrite, false);
+            Tensor gradMu = new Tensor(mu.Shape, _computeCtx.Context, $"{layerId}.tshift_gmu", MemoryFlags.ReadWrite, false);
+
+            long partBytes = (long)B * T * C * sizeof(float);
+            NOpenCL.Buffer gradMuPart = OpenCLBufferManager.GetOrCreateBuffer(_computeCtx.Context, $"{layerId}.tshift_gmupart", partBytes);
+
+            int total = B * T * C;
+            int local = 256;
+            int global = ((total + local - 1) / local) * local;
+
+            var q = DeviceQueueRegistry.GetCurrent();
+            _kernelTokenShiftBwd.Arguments[0].SetValue(x.DataBuffer);
+            _kernelTokenShiftBwd.Arguments[1].SetValue(mu.DataBuffer);
+            _kernelTokenShiftBwd.Arguments[2].SetValue(gradOut.DataBuffer);
+            _kernelTokenShiftBwd.Arguments[3].SetValue(gradX.DataBuffer);
+            _kernelTokenShiftBwd.Arguments[4].SetValue(gradMuPart);
+            _kernelTokenShiftBwd.Arguments[5].SetValue(B);
+            _kernelTokenShiftBwd.Arguments[6].SetValue(T);
+            _kernelTokenShiftBwd.Arguments[7].SetValue(C);
+            q.EnqueueNDRangeKernel(_kernelTokenShiftBwd, null, new[] { (IntPtr)global }, new[] { (IntPtr)local });
+
+            // Редукция [B * T, C] -> [C] через существующее _kernelReduceRowsSum
+            int redLocal = 64;
+            int redGlobal = ((C + redLocal - 1) / redLocal) * redLocal;
+            _kernelReduceRowsSum.Arguments[0].SetValue(gradMuPart);
+            _kernelReduceRowsSum.Arguments[1].SetValue(gradMu.DataBuffer);
+            _kernelReduceRowsSum.Arguments[2].SetValue(B * T);
+            _kernelReduceRowsSum.Arguments[3].SetValue(C);
+            q.EnqueueNDRangeKernel(_kernelReduceRowsSum, null, new[] { (IntPtr)redGlobal }, new[] { (IntPtr)redLocal });
+
+            return (gradX, gradMu);
+        }
+
+        // 2. Унарные операции RWKV (0 = Sigmoid, 1 = SquaredReLU, 2 = NegExp)
+        public Tensor RwkvUnary(Tensor x, int mode, string layerId)
+        {
+            Tensor y = new Tensor(x.Shape, _computeCtx.Context, $"{layerId}.unary_{mode}", MemoryFlags.ReadWrite, x.RequiresGrad);
+            int local = 256;
+            int global = ((x.Size + local - 1) / local) * local;
+
+            var q = DeviceQueueRegistry.GetCurrent();
+            _kernelRwkvUnaryFwd.Arguments[0].SetValue(x.DataBuffer);
+            _kernelRwkvUnaryFwd.Arguments[1].SetValue(y.DataBuffer);
+            _kernelRwkvUnaryFwd.Arguments[2].SetValue(x.Size);
+            _kernelRwkvUnaryFwd.Arguments[3].SetValue(mode);
+            q.EnqueueNDRangeKernel(_kernelRwkvUnaryFwd, null, new[] { (IntPtr)global }, new[] { (IntPtr)local });
+
+            if (x.RequiresGrad)
+                y.Creator = new RwkvUnaryOp(x, y, mode, this, layerId);
+
+            return y;
+        }
+
+        public Tensor RwkvUnaryBackward(Tensor gradY, Tensor x, Tensor y, int mode, string layerId)
+        {
+            Tensor gradX = new Tensor(x.Shape, _computeCtx.Context, $"{layerId}.unary_gx_{mode}", MemoryFlags.ReadWrite, false);
+            int local = 256;
+            int global = ((x.Size + local - 1) / local) * local;
+
+            var q = DeviceQueueRegistry.GetCurrent();
+            _kernelRwkvUnaryBwd.Arguments[0].SetValue(x.DataBuffer);
+            _kernelRwkvUnaryBwd.Arguments[1].SetValue(y.DataBuffer);
+            _kernelRwkvUnaryBwd.Arguments[2].SetValue(gradY.DataBuffer);
+            _kernelRwkvUnaryBwd.Arguments[3].SetValue(gradX.DataBuffer);
+            _kernelRwkvUnaryBwd.Arguments[4].SetValue(x.Size);
+            _kernelRwkvUnaryBwd.Arguments[5].SetValue(mode);
+            q.EnqueueNDRangeKernel(_kernelRwkvUnaryBwd, null, new[] { (IntPtr)global }, new[] { (IntPtr)local });
+
+            return gradX;
+        }
+
+        // 3. Поэлементное умножение (a * b)
+        public Tensor Mul(Tensor a, Tensor b, string layerId)
+        {
+            bool reqGrad = a.RequiresGrad || b.RequiresGrad;
+            Tensor c = new Tensor(a.Shape, _computeCtx.Context, $"{layerId}.mul", MemoryFlags.ReadWrite, reqGrad);
+            int local = 256;
+            int global = ((a.Size + local - 1) / local) * local;
+
+            var q = DeviceQueueRegistry.GetCurrent();
+            _kernelTensorMulFwd.Arguments[0].SetValue(a.DataBuffer);
+            _kernelTensorMulFwd.Arguments[1].SetValue(b.DataBuffer);
+            _kernelTensorMulFwd.Arguments[2].SetValue(c.DataBuffer);
+            _kernelTensorMulFwd.Arguments[3].SetValue(a.Size);
+            q.EnqueueNDRangeKernel(_kernelTensorMulFwd, null, new[] { (IntPtr)global }, new[] { (IntPtr)local });
+
+            if (reqGrad)
+                c.Creator = new MulOp(a, b, c, this, layerId);
+
+            return c;
+        }
+
+        public (Tensor gradA, Tensor gradB) MulBackward(Tensor gradC, Tensor a, Tensor b, string layerId)
+        {
+            Tensor gradA = new Tensor(a.Shape, _computeCtx.Context, $"{layerId}.mul_ga", MemoryFlags.ReadWrite, false);
+            Tensor gradB = new Tensor(b.Shape, _computeCtx.Context, $"{layerId}.mul_gb", MemoryFlags.ReadWrite, false);
+            int local = 256;
+            int global = ((a.Size + local - 1) / local) * local;
+
+            var q = DeviceQueueRegistry.GetCurrent();
+            _kernelTensorMulBwd.Arguments[0].SetValue(a.DataBuffer);
+            _kernelTensorMulBwd.Arguments[1].SetValue(b.DataBuffer);
+            _kernelTensorMulBwd.Arguments[2].SetValue(gradC.DataBuffer);
+            _kernelTensorMulBwd.Arguments[3].SetValue(gradA.DataBuffer);
+            _kernelTensorMulBwd.Arguments[4].SetValue(gradB.DataBuffer);
+            _kernelTensorMulBwd.Arguments[5].SetValue(a.Size);
+            q.EnqueueNDRangeKernel(_kernelTensorMulBwd, null, new[] { (IntPtr)global }, new[] { (IntPtr)local });
+
+            return (gradA, gradB);
+        }
+        #endregion
+        private static readonly Random _dropoutRng = new Random();
+
+        /// <summary>
+        /// Inverted Dropout (Forward).
+        /// В режиме инференса (isTraining = false) возвращает исходный тензор без затрат VRAM и GPU.
+        /// </summary>
+        public Tensor Dropout(Tensor x, float p = 0.1f, bool isTraining = true, string layerId = "dropout")
+        {
+            if (p < 0.0f || p >= 1.0f)
+                throw new ArgumentOutOfRangeException(nameof(p), "Вероятность Dropout должна быть в диапазоне [0.0, 1.0).");
+
+            // При инференсе или p == 0 слой прозрачен
+            if (!isTraining || p == 0.0f)
+                return x;
+
+            float scale = 1.0f / (1.0f - p);
+            uint seed = (uint)_dropoutRng.Next();
+            int size = (int)x.Size;
+
+            Tensor y = new Tensor(x.Shape, _computeCtx.Context, $"{layerId}_out", MemoryFlags.ReadWrite, requiresGrad: x.RequiresGrad);
+
+            // Выделяем компактный буфер маски (1 байт на элемент)
+            NOpenCL.Buffer maskBuf = _computeCtx.Context.CreateBuffer(MemoryFlags.ReadWrite, size * sizeof(byte));
+
+            int localSize = 256;
+            int globalSize = ((size + localSize - 1) / localSize) * localSize;
+
+            CommandQueue activeQueue = DeviceQueueRegistry.GetCurrent();
+            int arg = 0;
+            _kernelDropoutForward.Arguments[arg++].SetValue(x.DataBuffer);
+            _kernelDropoutForward.Arguments[arg++].SetValue(y.DataBuffer);
+            _kernelDropoutForward.Arguments[arg++].SetValue(maskBuf);
+            _kernelDropoutForward.Arguments[arg++].SetValue(p);
+            _kernelDropoutForward.Arguments[arg++].SetValue(scale);
+            _kernelDropoutForward.Arguments[arg++].SetValue(seed);
+            _kernelDropoutForward.Arguments[arg++].SetValue(size);
+
+            activeQueue.EnqueueNDRangeKernel(_kernelDropoutForward,  new[] { new IntPtr(globalSize) }, new[] { new IntPtr(localSize) });
+            activeQueue.Finish();
+
+            if (y.RequiresGrad)
+            {
+                var buffers = new LayerBuffers();
+                buffers.layerBuffers.Add($"{layerId}_mask", maskBuf);
+                GradientStorage.Push(buffers);
+
+                y.Creator = new DropoutOp(x, y, scale, this, layerId);
+            }
+            else
+            {
+                maskBuf.Dispose();
+            }
+
+            return y;
+        }
+
+        /// <summary>
+        /// Inverted Dropout (Backward).
+        /// </summary>
+        public Tensor DropoutBackward(Tensor gradOutput, NOpenCL.Buffer maskBuf, float scale, string layerId)
+        {
+            int size = (int)gradOutput.Size;
+            Tensor gradX = new Tensor(gradOutput.Shape, _computeCtx.Context, $"{layerId}_grad_x", MemoryFlags.ReadWrite, requiresGrad: false);
+
+            int localSize = 256;
+            int globalSize = ((size + localSize - 1) / localSize) * localSize;
+
+            CommandQueue activeQueue = DeviceQueueRegistry.GetCurrent();
+            int arg = 0;
+            _kernelDropoutBackward.Arguments[arg++].SetValue(gradOutput.DataBuffer);
+            _kernelDropoutBackward.Arguments[arg++].SetValue(maskBuf);
+            _kernelDropoutBackward.Arguments[arg++].SetValue(gradX.DataBuffer);
+            _kernelDropoutBackward.Arguments[arg++].SetValue(scale);
+            _kernelDropoutBackward.Arguments[arg++].SetValue(size);
+
+            activeQueue.EnqueueNDRangeKernel(_kernelDropoutBackward,  new[] { new IntPtr(globalSize) }, new[] { new IntPtr(localSize) });
+            activeQueue.Finish();
+
+            return gradX;
+        }
+        /// <summary>
+        /// Нарезает изображение [B, C, H, W] на патчи [B, (H/P)*(W/P), C*P*P].
+        /// </summary>
+        public Tensor Patchify(Tensor img, int patchSize, string opId = "patchify")
+        {
+            if (img.Shape.Length != 4)
+                throw new ArgumentException("Ожидается 4D-тензор изображения [Batch, Channels, Height, Width].");
+
+            int B = img.Shape[0];
+            int C = img.Shape[1];
+            int H = img.Shape[2];
+            int W = img.Shape[3];
+
+            if (H % patchSize != 0 || W % patchSize != 0)
+                throw new ArgumentException($"Размеры изображения ({H}x{W}) должны делиться на patchSize ({patchSize}).");
+
+            int numPatches = (H / patchSize) * (W / patchSize);
+            int patchDim = C * patchSize * patchSize;
+
+            Tensor output = new Tensor(new[] { B, numPatches, patchDim }, _computeCtx.Context, $"{opId}_out", MemoryFlags.ReadWrite, requiresGrad: img.RequiresGrad);
+
+            const int TILE = 16;
+            IntPtr[] localSize = new[] { new IntPtr(TILE), new IntPtr(TILE) };
+            IntPtr[] globalSize = new[]
+            {
+                new IntPtr(((patchDim + TILE - 1) / TILE) * TILE),
+                new IntPtr(((B * numPatches + TILE - 1) / TILE) * TILE)
+            };
+
+            CommandQueue queue = DeviceQueueRegistry.GetCurrent();
+            int arg = 0;
+            _kernelPatchifyForward.Arguments[arg++].SetValue(img.DataBuffer);
+            _kernelPatchifyForward.Arguments[arg++].SetValue(output.DataBuffer);
+            _kernelPatchifyForward.Arguments[arg++].SetValue(B);
+            _kernelPatchifyForward.Arguments[arg++].SetValue(C);
+            _kernelPatchifyForward.Arguments[arg++].SetValue(H);
+            _kernelPatchifyForward.Arguments[arg++].SetValue(W);
+            _kernelPatchifyForward.Arguments[arg++].SetValue(patchSize);
+
+            queue.EnqueueNDRangeKernel(_kernelPatchifyForward, null, globalSize, localSize);
+            queue.Finish();
+
+            if (output.RequiresGrad)
+            {
+                output.Creator = new PatchifyOp(img, output, patchSize, this, opId);
+            }
+
+            return output;
+        }
+
+        public Tensor PatchifyBackward(Tensor gradOutput, int[] imgShape, int patchSize, string opId)
+        {
+            int B = imgShape[0];
+            int C = imgShape[1];
+            int H = imgShape[2];
+            int W = imgShape[3];
+            int numPatches = (H / patchSize) * (W / patchSize);
+            int patchDim = C * patchSize * patchSize;
+
+            Tensor gradImg = new Tensor(imgShape, _computeCtx.Context, $"{opId}_grad_img", MemoryFlags.ReadWrite, requiresGrad: false);
+
+            const int TILE = 16;
+            IntPtr[] localSize = new[] { new IntPtr(TILE), new IntPtr(TILE) };
+            IntPtr[] globalSize = new[]
+            {
+                new IntPtr(((patchDim + TILE - 1) / TILE) * TILE),
+                new IntPtr(((B * numPatches + TILE - 1) / TILE) * TILE)
+            };
+
+            CommandQueue queue = DeviceQueueRegistry.GetCurrent();
+            int arg = 0;
+            _kernelPatchifyBackward.Arguments[arg++].SetValue(gradOutput.DataBuffer);
+            _kernelPatchifyBackward.Arguments[arg++].SetValue(gradImg.DataBuffer);
+            _kernelPatchifyBackward.Arguments[arg++].SetValue(B);
+            _kernelPatchifyBackward.Arguments[arg++].SetValue(C);
+            _kernelPatchifyBackward.Arguments[arg++].SetValue(H);
+            _kernelPatchifyBackward.Arguments[arg++].SetValue(W);
+            _kernelPatchifyBackward.Arguments[arg++].SetValue(patchSize);
+
+            queue.EnqueueNDRangeKernel(_kernelPatchifyBackward, null, globalSize, localSize);
+            queue.Finish();
+
+            return gradImg;
+        }
+
+        /// <summary>
+        /// Прибавляет позиционные эмбеддинги [1, NumPatches, D] к тензору [B, NumPatches, D].
+        /// </summary>
+        public Tensor AddPosEmbed(Tensor x, Tensor posEmbed, string opId = "pos_emb")
+        {
+            int B = x.Shape[0];
+            int nd = (int)(x.Size / B);
+            if (posEmbed.Size != nd)
+                throw new ArgumentException($"Размер PosEmbed ({posEmbed.Size}) должен совпадать с NumPatches * D ({nd}).");
+
+            bool reqGrad = x.RequiresGrad || posEmbed.RequiresGrad;
+            Tensor output = new Tensor(x.Shape, _computeCtx.Context, $"{opId}_out", MemoryFlags.ReadWrite, requiresGrad: reqGrad);
+
+            int totalSize = (int)x.Size;
+            int localSize = 256;
+            int globalSize = ((totalSize + localSize - 1) / localSize) * localSize;
+
+            CommandQueue queue = DeviceQueueRegistry.GetCurrent();
+            int arg = 0;
+            _kernelAddPosForward.Arguments[arg++].SetValue(x.DataBuffer);
+            _kernelAddPosForward.Arguments[arg++].SetValue(posEmbed.DataBuffer);
+            _kernelAddPosForward.Arguments[arg++].SetValue(output.DataBuffer);
+            _kernelAddPosForward.Arguments[arg++].SetValue(B);
+            _kernelAddPosForward.Arguments[arg++].SetValue(nd);
+
+            queue.EnqueueNDRangeKernel(_kernelAddPosForward, new[] { new IntPtr(globalSize) }, new[] { new IntPtr(localSize) });
+            queue.Finish();
+
+            if (output.RequiresGrad)
+            {
+                output.Creator = new AddPosEmbedOp(x, posEmbed, output, this, opId);
+            }
+
+            return output;
+        }
+
+        public (Tensor gradX, Tensor gradPos) AddPosEmbedBackward(Tensor gradOutput, Tensor posEmbed, string opId)
+        {
+            int B = gradOutput.Shape[0];
+            int nd = (int)(gradOutput.Size / B);
+
+            // Градиент по x — это полная копия gradOutput
+            Tensor gradX = CloneTensor(gradOutput, $"{opId}_grad_x");
+            // Градиент по posEmbed — сумма gradOutput по всем элементам батча B
+            Tensor gradPos = new Tensor(posEmbed.Shape, _computeCtx.Context, $"{opId}_grad_pos", MemoryFlags.ReadWrite, requiresGrad: false);
+
+            int localSize = 256;
+            int globalSize = ((nd + localSize - 1) / localSize) * localSize;
+
+            CommandQueue queue = DeviceQueueRegistry.GetCurrent();
+            int arg = 0;
+            _kernelAddPosBackwardPos.Arguments[arg++].SetValue(gradOutput.DataBuffer);
+            _kernelAddPosBackwardPos.Arguments[arg++].SetValue(gradPos.DataBuffer);
+            _kernelAddPosBackwardPos.Arguments[arg++].SetValue(B);
+            _kernelAddPosBackwardPos.Arguments[arg++].SetValue(nd);
+
+            queue.EnqueueNDRangeKernel(_kernelAddPosBackwardPos,  new[] { new IntPtr(globalSize) }, new[] { new IntPtr(localSize) });
+            queue.Finish();
+
+            return (gradX, gradPos);
+        }
     }
+
 }
+
 

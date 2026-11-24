@@ -146,35 +146,26 @@ kernel void linear_forward_tiled(
 // 2. ЯДРО ОБРАТНОГО ПРОХОДА ДЛЯ BIAS (Редукция по осям Batch и M)
 // gradOutput: [Batch, M, N] -> gradBias: [1, N]
 // Сетка запуска: Global = [N * 256], Local = [256] (1 рабочая группа на 1 выходной признак)
+// cl_kernels/linear.cl
+#define LOCAL_N 64
 __kernel void linear_bias_backward(
-    __global const float* grad_output,
-    __global float* grad_bias,
-    const int total_rows, // Batch * M
-    const int N)
-{
-    int col = get_group_id(0);
-    int tid = get_local_id(0);
-    int gsize = get_local_size(0);
+ __global const float* grad_output, // [total_rows, N]
+__global float* grad_bias,  // [N]
+ const int total_rows,  // Batch * M
+const int N
+) {
+ // Быстрая коалесцированная ось по столбцам N
+ int col = get_global_id(0);
+//if (col >= N) return;
 
-    if (col >= N) return;
+ float sum = 0.0f;
+ __global const float* ptr = grad_output + col;
 
-    __local float l_sum[256];
-
-    float partial_sum = 0.0f;
-    for (int r = tid; r < total_rows; r += gsize) {
-        partial_sum += grad_output[r * N + col];
-    }
-    l_sum[tid] = partial_sum;
-    barrier(CLK_LOCAL_MEM_FENCE);
-
-    for (int s = gsize / 2; s > 0; s >>= 1) {
-        if (tid < s) {
-            l_sum[tid] += l_sum[tid + s];
-        }
-        barrier(CLK_LOCAL_MEM_FENCE);
-    }
-
-    if (tid == 0) {
-        grad_bias[col] = l_sum[0];
-    }
+ #pragma unroll 8
+ for (int r = 0; r < total_rows; r++) {
+ sum += ptr[r * N];
 }
+
+ grad_bias[col] = sum;
+}
+ 

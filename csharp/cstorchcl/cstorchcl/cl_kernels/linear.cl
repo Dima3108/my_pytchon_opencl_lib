@@ -146,23 +146,26 @@ kernel void linear_forward_tiled(
 // 2. ЯДРО ОБРАТНОГО ПРОХОДА ДЛЯ BIAS (Редукция по осям Batch и M)
 // gradOutput: [Batch, M, N] -> gradBias: [1, N]
 // Сетка запуска: Global = [N * 256], Local = [256] (1 рабочая группа на 1 выходной признак)
+// cl_kernels/linear.cl
+#define LOCAL_N 64
 __kernel void linear_bias_backward(
-    __global const float* grad_output, // [total_rows, N]
-    __global float* grad_bias,         // [N]
-    const int total_rows,              // Batch * M
-    const int N
+ __global const float* grad_output, // [total_rows, N]
+__global float* grad_bias,  // [N]
+ const int total_rows,  // Batch * M
+const int N
 ) {
-    // Быстрая коалесцированная ось по столбцам N
-    int col = get_global_id(0);
-    if (col >= N) return;
+ // Быстрая коалесцированная ось по столбцам N
+ int col = get_global_id(0);
+//if (col >= N) return;
 
-    float sum = 0.0f;
-    __global const float* ptr = grad_output + col;
+ float sum = 0.0f;
+ __global const float* ptr = grad_output + col;
 
-    #pragma unroll 8
-    for (int r = 0; r < total_rows; r++) {
-        sum += ptr[r * N];
-    }
-
-    grad_bias[col] = sum;
+ #pragma unroll 8
+ for (int r = 0; r < total_rows; r++) {
+ sum += ptr[r * N];
 }
+
+ grad_bias[col] = sum;
+}
+ 

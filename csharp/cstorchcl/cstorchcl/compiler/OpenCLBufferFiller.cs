@@ -36,7 +36,7 @@ namespace cstorchcl.compiler
                 }
             }
         ";
-
+        private static NOpenCL.Program program = null;
         /// <summary>
         /// Заполняет OpenCL-буфер нулями на GPU.
         /// </summary>
@@ -48,10 +48,13 @@ namespace cstorchcl.compiler
             if (sizeInBytes <= 0) return;
 
             CommandQueue queue = DeviceQueueRegistry.GetCurrent();
-
+                           if (program == null)
+            {
+ program = compiler.JITProgramCache.GetOrCompile(queue.Context, queue.Device, ZeroKernelSource);
+            }
             Kernel kernel = _zeroKernels.GetOrAdd(queue.Context, ctx =>
             {
-                var program = compiler.JITProgramCache.GetOrCompile(ctx, queue.Device, ZeroKernelSource);
+ 
                 return program.CreateKernel("fill_zero_vec16");
             });
 
@@ -61,9 +64,9 @@ namespace cstorchcl.compiler
             // Общее число логических потоков равно максимуму между числом vec16-блоков и остатком байтов
             long workItems = Math.Max(numVec16, remainder);
 
-            const long localSize = 256;
+             long localSize =256;
             long globalSize = ((workItems + localSize - 1) / localSize) * localSize;
-
+            
             lock (_execLock)
             {
                 kernel.Arguments[0].SetValue(buffer);

@@ -201,19 +201,14 @@ namespace cstorchcl.core
         /// <param name="context">Контекст OpenCL.</param>
         public void InitGradient(Context context)
         {
-            // Исправление 1: Выходим, если расчет градиентов НЕ требуется
             if (!RequiresGrad) return;
-
-            // Исправление 2: Правильная проверка nullable-объекта Tensor на null
             if (Grad == null)
             {
-                // Градиент всегда имеет ту же форму, что и сам тензор
-                Grad = new Tensor(Shape, context,TensorID+"_grad", MemoryFlags.ReadWrite, requiresGrad: false);
-
-                // ВАЖНО: В Autograd градиенты перед началом обратного прохода обнуляются.
-                // Заполнение нулями (Zero-init) должно происходить через OpenCL Queue (команда fill или запись массива).
+                Grad = new Tensor(Shape, context, TensorID + "_grad", MemoryFlags.ReadWrite, requiresGrad: false);
+                OpenCLBufferFiller.FillZero(Grad.DataBuffer, (long)Grad.Size * sizeof(float));
             }
         }
+
 
 
         // =========================================================================

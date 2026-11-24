@@ -75,14 +75,14 @@ namespace cstorchcl.core
         {
             // === ШАГ 1: ЭНКОДЕР ===
             // Вызываем эмбеддинг через глобальный объект clGlob
-            Tensor embeddedEncoder = NnClGlob.Embedding(encoderInputsBuf, encoderWeigth, batchSize * seqLen);
+            Tensor embeddedEncoder = NnClGlob.Embedding(encoderInputsBuf, encoderWeigth, batchSize * seqLen,LAYER_ID+".embed1");
             //embeddedEncoder.Shape = new int { batchSize, seqLen, _hiddenDim };
             embeddedEncoder.ReShape(new int []{ batchSize, seqLen, _hiddenDim });
             // Прогон через LSTM Энкодера
             Tensor encoderOutputs = EncoderLstm.Forward(embeddedEncoder); // [Batch, SeqLen, HiddenDim]
 
             // === ШАГ 2: ДЕКОДЕР ===
-            Tensor embeddedDecoder = NnClGlob.Embedding(decoderTargetsBuf, decoderWeigth, batchSize * seqLen);
+            Tensor embeddedDecoder = NnClGlob.Embedding(decoderTargetsBuf, decoderWeigth, batchSize * seqLen, LAYER_ID + ".embed2");
             //embeddedDecoder.Shape = new int { batchSize, seqLen, _hiddenDim };
             embeddedDecoder.ReShape(new int[] { batchSize, seqLen, _hiddenDim });
 

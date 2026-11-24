@@ -1,48 +1,59 @@
-// Ядро прямого прохода: Суммирование по произвольной оси
-// Global Work Size: [outer_size, inner_size]
+// cl_kernels/reduce_sum_axis.cl
+
 __kernel void reduce_sum_axis(
     __global const float* X,
     __global float* Y,
     const int outer_size,
     const int axis_size,
-    const int inner_size)
-{
-    int outer_idx = get_global_id(0);
-    int inner_idx = get_global_id(1);
+    const int inner_size
+) {
+    int lx = get_local_id(0);
+    int ly = get_local_id(1);
+    int wg_x = get_local_size(0); // 32 (если inner_size >= 32) или 1
+    int wg_y = get_local_size(1); // 8  (если inner_size >= 32) или 256
 
-    if (outer_idx >= outer_size || inner_idx >= inner_size) return;
+    int inner_idx = get_group_id(0) * wg_x + lx;
+    int outer_idx = get_group_id(1);
+
+    __local float sdata[256];
+    int tid = ly * wg_x + lx;
 
     float sum = 0.0f;
-    // Базовое смещение в исходном тензоре для текущего среза
-    int base_offset = outer_idx * (axis_size * inner_size) + inner_idx;
+    if (outer_idx < outer_size && inner_idx < inner_size) {
+        int base_offset = outer_idx * (axis_size * inner_size) + inner_idx;
+        for (int a = ly; a < axis_size; a += wg_y) {
+            sum += X[base_offset + a * inner_size];
+        }
+    }
+    sdata[tid] = sum;
+    barrier(CLK_LOCAL_MEM_FENCE);
 
-    for (int a = 0; a < axis_size; a++) {
-        sum += X[base_offset + a * inner_size];
+    // Древовидная редукция по оси Y
+    for (int stride = wg_y >> 1; stride > 0; stride >>= 1) {
+        if (ly < stride) {
+            sdata[tid] += sdata[(ly + stride) * wg_x + lx];
+        }
+        barrier(CLK_LOCAL_MEM_FENCE);
     }
 
-    Y[outer_idx * inner_size + inner_idx] = sum;
+    if (ly == 0 && outer_idx < outer_size && inner_idx < inner_size) {
+        Y[outer_idx * inner_size + inner_idx] = sdata[lx];
+    }
 }
 
-// Ядро обратного прохода: Растягивание (Broadcast) градиента обратно по оси суммирования
-// Математически производная суммы d(sum(X))/dX_i = 1.0f для каждого элемента оси.
-// Поэтому пришедший сверху градиент gradOutput просто копируется во все ячейки вдоль оси.
-// Global Work Size: [outer_size, inner_size]
+// Для Backward локальная память не нужна: убираем последовательный цикл,
+// делая плоскую 1D-сетку по всем элементам выходного тензора (100% coalesced write)
 __kernel void reduce_sum_axis_backward(
     __global const float* grad_output,
     __global float* grad_input,
-    const int outer_size,
+    const int total_elements,
     const int axis_size,
-    const int inner_size)
-{
-    int outer_idx = get_global_id(0);
-    int inner_idx = get_global_id(1);
+    const int inner_size
+) {
+    int id = get_global_id(0);
+    if (id >= total_elements) return;
 
-    if (outer_idx >= outer_size || inner_idx >= inner_size) return;
-
-    float grad_val = grad_output[outer_idx * inner_size + inner_idx];
-    int base_offset = outer_idx * (axis_size * inner_size) + inner_idx;
-
-    for (int a = 0; a < axis_size; a++) {
-        grad_input[base_offset + a * inner_size] = grad_val;
-    }
+    int inner_idx = id % inner_size;
+    int outer_idx = id / (axis_size * inner_size);
+    grad_input[id] = grad_output[outer_idx * inner_size + inner_idx];
 }
